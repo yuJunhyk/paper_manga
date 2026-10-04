@@ -21,4 +21,5 @@ curl -s http://127.0.0.1:8080/api/papers/<작업 번호>/comic | python3 -m json
 ## 다른 곳에 있는 결과
 
 - Python 시험 1~7차: `spikes/llm-spike/results/` (그 폴더의 README 참고)
+- 결정 기록과 진행 상황: `docs/plan.md`
 - 1단계 추출 도구 비교: `spikes/pdfbox-spike/*.txt`(PDFBox), `spikes/grobid-spike/*.xml`(GROBID)

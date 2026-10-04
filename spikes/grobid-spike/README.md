@@ -11,4 +11,4 @@ curl -sS -F "input=@samples/latent-diffusion-2112.10752.pdf" -F segmentSentences
   http://127.0.0.1:8070/api/processFulltextDocument > spikes/grobid-spike/latent-diffusion-2112.10752.xml
 ```
 
-비교 결과와 GROBID로 결정한 이유는 `plan.md` 1단계 항목에 있습니다.
+비교 결과와 GROBID로 결정한 이유는 `docs/plan.md` 1단계 항목에 있습니다.
