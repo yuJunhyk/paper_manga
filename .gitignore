@@ -1,0 +1,14 @@
+samples/*.pdf
+
+# 운영체제·편집기·빌드가 만드는 파일
+.DS_Store
+.idea/
+__pycache__/
+
+# 이 컴퓨터에만 해당하는 설정값 (양식은 .env.example)
+.env
+
+# 논문 원문 추출물: PDF와 같은 이유(저작권)로 올리지 않는다. GROBID·PDFBox로 다시 만들 수 있다
+spikes/pdfbox-spike/*.txt
+spikes/grobid-spike/*.xml
+results/*grobid-api*
