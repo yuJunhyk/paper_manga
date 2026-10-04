@@ -3,7 +3,7 @@ package com.readmanga.backend.paper;
 import java.time.LocalDateTime;
 
 /**
- * 작업 조회 응답. 처리 중이면 stage(논문 분석 / 사실 고르기 / 대본 쓰기)와 진행률(progressDone/progressTotal)을 함께 본다.
+ * 작업 조회 응답. 처리 중이면 stage(논문 분석 / 핵심 사실 추출 / 대본 쓰기)와 진행률(progressDone/progressTotal)을 함께 본다.
  */
 public record JobResponse(
         Long id,

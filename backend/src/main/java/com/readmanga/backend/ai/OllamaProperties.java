@@ -12,7 +12,7 @@ import java.time.Duration;
  * @param healthTimeout  서버가 살아 있는지 확인할 때 기다리는 시간
  * @param requestTimeout 대본 생성 요청 하나를 기다리는 최대 시간
  * @param contextLength  AI가 한 번에 읽을 수 있는 길이(토큰)
- * @param factModel      조각 제목·사실 고르기에 쓰는 모델
+ * @param factModel      조각 제목·핵심 사실 추출에 쓰는 모델
  * @param dialogueModel  이야기·컷 쓰기에 쓰는 모델
  */
 @ConfigurationProperties(prefix = "ollama")

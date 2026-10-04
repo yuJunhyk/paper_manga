@@ -35,6 +35,6 @@ public class PaperResultStore {
         paperSentenceRepository.saveAll(sentences);
 
         job.recordTitle(paper.title());  // 트랜잭션 안에서 바꾼 값은 끝날 때 자동으로 DB에 반영된다 (변경 감지)
-        job.moveTo(JobStage.PLANNING, 0);   // 문장 저장이 끝나면 다음은 사실 고르기
+        job.moveTo(JobStage.PLANNING, 0);   // 문장 저장이 끝나면 다음은 핵심 사실 추출
     }
 }
