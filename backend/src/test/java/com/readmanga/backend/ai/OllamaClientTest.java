@@ -3,6 +3,7 @@ package com.readmanga.backend.ai;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.web.client.HttpServerErrorException;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -200,6 +201,39 @@ class OllamaClientTest {
 
         assertThat(result.truncated()).isTrue();
         assertThat(client.status(OllamaServer.PRIMARY).pausedUntil()).as("서버는 멀쩡하므로 건너뛰지 않는다").isNull();
+    }
+
+    @Test
+    void 그래픽카드_오류로_모델이_멈추면_한_번_더_보내고_다시_나면_그대로_알린다() throws IOException {
+        java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger crashes = new java.util.concurrent.atomic.AtomicInteger(1);  // 처음 한 번만 오류
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/version", exchange -> respond(exchange, "{\"version\":\"fake\"}"));
+        server.createContext("/api/chat", exchange -> {
+            exchange.getRequestBody().readAllBytes();
+            calls.incrementAndGet();
+            if (crashes.getAndDecrement() > 0) {
+                byte[] bytes = "{\"error\":\"an error was encountered while running the model: CUDA error\\nCUDA error: an illegal memory access was encountered\"}"
+                        .getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json");
+                exchange.sendResponseHeaders(500, bytes.length);
+                exchange.getResponseBody().write(bytes);
+                exchange.close();
+            } else {
+                respond(exchange, "{\"message\":{\"role\":\"assistant\",\"content\":\"{}\"},\"done_reason\":\"stop\"}");
+            }
+        });
+        server.start();
+        servers.add(server);
+        OllamaClient client = client("http://127.0.0.1:" + server.getAddress().getPort(), CLOSED_PORT_URL);
+
+        ChatResult result = client.chat("exaone3.5:7.8b", hello(), SCHEMA);
+        assertThat(result.content()).isEqualTo("{}");
+        assertThat(calls.get()).as("오류 1번 + 다시 보낸 1번").isEqualTo(2);
+
+        crashes.set(2);  // 다시 보내도 또 오류
+        assertThatThrownBy(() -> client.chat("exaone3.5:7.8b", hello(), SCHEMA)).isInstanceOf(HttpServerErrorException.class);
+        assertThat(calls.get()).as("한 번만 더 보낸다").isEqualTo(4);
     }
 
     @Test

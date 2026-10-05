@@ -46,6 +46,7 @@ public class OllamaClient implements AiChatClient {
     };
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
     private static final Duration MAX_RECONNECT_POLL = Duration.ofSeconds(5);
+    private static final Duration MODEL_CRASH_RETRY_WAIT = Duration.ofSeconds(2);  // 그래픽카드 오류 뒤 Ollama가 모델을 다시 올릴 시간
 
     private final OllamaProperties properties;
     private final Clock clock;
@@ -116,7 +117,7 @@ public class OllamaClient implements AiChatClient {
                     continue;
                 }
                 try {
-                    ChatResult result = send(server, model, messages, schema);
+                    ChatResult result = sendWithCrashRetry(server, model, messages, schema);
                     pausedUntil.remove(server);
                     noteServer(server);
                     return result;
@@ -136,6 +137,30 @@ public class OllamaClient implements AiChatClient {
             sleep(poll);
         }
         throw new AiUnavailableException("주 서버와 예비 서버가 모두 응답하지 않습니다", lastError);
+    }
+
+    /**
+     * 모델 실행 중 그래픽카드 오류(500 "CUDA error: an illegal memory access")가 나면 잠깐 기다렸다 한 번만 다시 보낸다.
+     * Ollama는 이 오류 뒤 모델을 다시 올리고, 직후 같은 요청은 정상으로 답했다(175·183번: 같은 논문의 대본 쓰기 2쪽에서 두 번).
+     * 두 번째도 나면 그대로 알린다(작업 실패 → 다시 시도로 살릴 수 있다).
+     */
+    private ChatResult sendWithCrashRetry(OllamaServer server, String model, List<ChatMessage> messages, Map<String, Object> schema) {
+        try {
+            return send(server, model, messages, schema);
+        } catch (HttpServerErrorException e) {
+            if (!isModelCrash(e)) {
+                throw e;
+            }
+            log.warn("{} AI 서버에서 모델 실행 오류가 나서 {}초 뒤 한 번 더 보냅니다 ({}): {}", server.getLabel(),
+                    MODEL_CRASH_RETRY_WAIT.toSeconds(), model, e.getResponseBodyAsString().lines().findFirst().orElse(""));
+            sleep(MODEL_CRASH_RETRY_WAIT);
+            return send(server, model, messages, schema);
+        }
+    }
+
+    private static boolean isModelCrash(HttpServerErrorException e) {
+        String body = e.getResponseBodyAsString();
+        return body.contains("CUDA error") || body.contains("error was encountered while running the model");
     }
 
     /** 건너뛰기를 모두 풀고 두 서버의 상태를 다시 확인한다 (예: 멎은 서버를 고친 뒤 기다리지 않고 바로 다시 쓰고 싶을 때). */
