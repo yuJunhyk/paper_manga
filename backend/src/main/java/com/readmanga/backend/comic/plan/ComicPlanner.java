@@ -68,6 +68,10 @@ public class ComicPlanner {
         List<Chunk> chunks = ChunkSplitter.split(sections, roles.size() * CHUNKS_PER_PAGE);
         Map<Integer, PaperSentence> byNumber = new HashMap<>();
         sentences.forEach(sentence -> byNumber.put(sentence.getNumber(), sentence));
+        // 논문에 나온 영어 낱말: 문장, 섹션 이름, 논문 제목
+        List<String> paperTexts = new ArrayList<>(List.of(paperTitle == null ? "" : paperTitle));
+        sentences.forEach(sentence -> paperTexts.addAll(List.of(sentence.getText(), String.valueOf(sentence.getSectionTitle()))));
+        Set<String> paperWords = TextRules.englishWords(paperTexts);
         log.info("만화 설계 시작: 본문 문장 {}개, {}쪽, 조각 {}개", bodySentences, roles.size(), chunks.size());
 
         Set<String> servers = new LinkedHashSet<>();
@@ -91,13 +95,18 @@ public class ComicPlanner {
             AiAsker.Answer<TitleItem> title = aiAsker.ask(properties.factModel(), PlanPrompts.OUTLINE_SYSTEM,
                     chunkTitlePrompt(paperTitle, chunk, byNumber),
                     JsonSchemas.object("title", JsonSchemas.string(), "summary", JsonSchemas.string()), TitleItem.class,
-                    answer -> mixedScriptProblems("조각 제목", answer.title() + " " + answer.summary()), MAX_RETRIES);
+                    answer -> {
+                        List<String> problems = mixedScriptProblems("조각 제목", answer.title() + " " + answer.summary());
+                        problems.addAll(unknownTermProblems("조각 제목", answer.title() + " " + answer.summary(), paperWords));
+                        return problems;
+                    }, MAX_RETRIES);
             title.attempts().forEach(attempt -> servers.add(attempt.server()));
             titleProblems.addAll(title.problems());
             chunkTitles.add(title.value());
             listener.update(++doneSteps, totalSteps);
         }
         long titleMillis = System.currentTimeMillis() - started;
+        log.info("조각 제목: {}", chunkTitles.stream().map(TitleItem::title).toList());
 
         // ④ 핵심 사실 추출
         started = System.currentTimeMillis();
@@ -114,12 +123,12 @@ public class ComicPlanner {
                 boolean closing = chunk.sections().stream().anyMatch(TextRules::isClosingSection);
                 int count = closing ? CLOSING_SECTION_FACTS : FACTS_PER_CHUNK;
 
-                AiAsker.Answer<FactsAnswer> answer = pickFacts(chunk, title, count, closing, byNumber);
+                AiAsker.Answer<FactsAnswer> answer = pickFacts(chunk, title, count, closing, byNumber, paperWords);
                 answer.attempts().forEach(attempt -> servers.add(attempt.server()));
                 listener.update(++doneSteps, totalSteps);
                 List<String> droppedHere = new ArrayList<>();
                 for (FactItem item : answer.value().facts()) {
-                    ComicPlan.FactPlan fact = filterFact(item, chunk, title, byNumber, usedEvidence, acceptedFacts);
+                    ComicPlan.FactPlan fact = filterFact(item, chunk, title, byNumber, usedEvidence, acceptedFacts, paperWords);
                     if (fact == null) {
                         droppedHere.add(item.fact());
                     } else {
@@ -167,7 +176,7 @@ public class ComicPlanner {
     // ---------- ④ 핵심 사실 추출 ----------
 
     private AiAsker.Answer<FactsAnswer> pickFacts(Chunk chunk, TitleItem title, int count, boolean closing,
-                                                  Map<Integer, PaperSentence> byNumber) {
+                                                  Map<Integer, PaperSentence> byNumber, Set<String> paperWords) {
         List<Integer> candidates = new ArrayList<>();
         StringBuilder lines = new StringBuilder();
         for (int number = chunk.start(); number <= chunk.end(); number++) {
@@ -182,14 +191,14 @@ public class ComicPlanner {
         Map<String, Object> schema = JsonSchemas.object("facts", JsonSchemas.array(
                 JsonSchemas.object("fact", JsonSchemas.string(), "evidence", JsonSchemas.array(JsonSchemas.integer(), 1, 3)),
                 count, count));
-        Function<FactsAnswer, List<String>> check = answer -> checkFacts(answer, allowed);
+        Function<FactsAnswer, List<String>> check = answer -> checkFacts(answer, allowed, paperWords);
         return aiAsker.ask(properties.factModel(), PlanPrompts.FACT_SYSTEM,
                 PlanPrompts.FACTS.formatted(title.title(), title.summary(), String.join(", ", chunk.sections()), count,
                         closing ? "\n" + PlanPrompts.LIMITATION_RULE : "", lines.toString().trim()),
                 schema, FactsAnswer.class, check, MAX_RETRIES);
     }
 
-    private static List<String> checkFacts(FactsAnswer answer, Set<Integer> allowed) {
+    private static List<String> checkFacts(FactsAnswer answer, Set<Integer> allowed, Set<String> paperWords) {
         List<String> problems = new ArrayList<>();
         Map<Integer, Integer> seen = new HashMap<>();
         for (int index = 0; index < answer.facts().size(); index++) {
@@ -209,6 +218,7 @@ public class ComicPlanner {
             if (TextRules.hasFormula(fact.fact())) {
                 problems.add(factNumber + "번 사실에 수식 기호가 있다. 수식 대신 그 뜻을 쉬운 말로 써라.");
             }
+            problems.addAll(unknownTermProblems(factNumber + "번 사실", fact.fact(), paperWords));
             if (TextRules.hasCitation(fact.fact())) {
                 problems.add("%d번 사실에 인용 번호가 들어 있다: \"%s\". 번호를 빼고 가리키는 대상을 말로 써라(예: '[88]의 모델' → '기존 인페인팅 모델')."
                         .formatted(factNumber, fact.fact()));
@@ -223,14 +233,15 @@ public class ComicPlanner {
      * 근거 문장이 겹쳐도 내용이 다르면 남긴다 (한 문장에서 '계산이 적다'와 'GAN보다 느리다'가 함께 나올 수 있다).
      */
     private static ComicPlan.FactPlan filterFact(FactItem item, Chunk chunk, TitleItem title, Map<Integer, PaperSentence> byNumber,
-                                                 Map<Integer, List<String>> usedEvidence, List<String> acceptedFacts) {
+                                                 Map<Integer, List<String>> usedEvidence, List<String> acceptedFacts, Set<String> paperWords) {
         String text = TextRules.removeCitations(item.fact());
         List<Integer> evidence = item.evidence().stream().distinct()
                 .filter(number -> number >= chunk.start() && number <= chunk.end())
                 .filter(number -> !TextRules.isTableFragment(byNumber.get(number).getText()))
                 .toList();
-        if (evidence.isEmpty() || TextRules.hasMixedScript(text) || TextRules.hasFormula(text)) {
-            return null;
+        if (evidence.isEmpty() || TextRules.hasMixedScript(text) || TextRules.hasFormula(text)
+                || !TextRules.unknownEnglishWords(text, paperWords).isEmpty()) {
+            return null;  // 다시 써도 논문에 없는 영어 용어가 남은 사실은 틀린 용어를 가르치게 되므로 버린다
         }
         boolean repeatsSameEvidence = evidence.stream()
                 .flatMap(number -> usedEvidence.getOrDefault(number, List.of()).stream())
@@ -242,6 +253,12 @@ public class ComicPlanner {
         evidence.forEach(number -> usedEvidence.computeIfAbsent(number, key -> new ArrayList<>()).add(text));
         acceptedFacts.add(text);
         return new ComicPlan.FactPlan(text, evidence, title.title());
+    }
+
+    private static List<String> unknownTermProblems(String label, String text, Set<String> paperWords) {
+        List<String> unknown = TextRules.unknownEnglishWords(text, paperWords);
+        return unknown.isEmpty() ? List.of() : List.of("%s에 논문에 없는 영어 용어가 있다: %s. 영어 원문은 논문 문장에 나온 그대로 쓴다."
+                .formatted(label, String.join(", ", unknown)));
     }
 
     private static List<String> mixedScriptProblems(String label, String text) {

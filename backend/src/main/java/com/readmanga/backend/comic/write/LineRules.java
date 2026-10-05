@@ -28,11 +28,17 @@ public final class LineRules {
     private static final Pattern SPEECH_ENDING = Pattern.compile("(야|지|단다|요|어|거든|네|니다|세요)[.!?~…]*$");
     private static final String QUOTE_MARKS = "\"“”'‘’";
     /**
-     * 장면 칸에 섞여 들어온 대사·서식 (실제 실행 1차 7컷, 2차 2컷). 특정 문구를 막으면 옆으로 새서, 넓게 잡는다:
-     * 서식·구조 기호(*, {, #, [ 등), 화자 이름표("**박사님**:", "누리: 박사님, …"), 참고 설명, 응답 칸 이름("lines에는 대사만 포함한다.")
+     * 장면 칸에 섞여 들어온 대사·서식 (실제 실행 1차 7컷, 2차 2컷, 3차 3컷). 특정 문구를 막으면 옆으로 새서, 넓게 잡는다:
+     * 서식·구조 기호(*, {, #, [ 등), 큰따옴표(대사 인용), 쌍점("누리:", "질문한다:"), 웹 문서 줄바꿈 찌꺼기("br/"),
+     * 참고 설명, 응답 칸 이름("lines에는 대사만 포함한다.")
      */
     private static final Pattern SCENE_INTRUSION = Pattern.compile(
-            "[*{}\\[\\]<>#`|\\\\_]|(누리|박사님|해설|대사)\\s*[:：]|\\(\\s*참고|\\b(lines|scene|speaker|text|JSON)\\b");
+            "[*{}\\[\\]<>#`|\\\\_\"“”:：]|(?i:\\bbr\\s*/)|\\(\\s*참고|\\b(lines|scene|speaker|text|JSON)\\b");
+    /** 대사 속 괄호 행동 설명: "(눈을 반짝이며) 와, 그렇군요!" (3차 실행) */
+    private static final Pattern ACTION_IN_PARENS = Pattern.compile("\\(\\s*[가-힣 ,]{2,30}(며|고|서|채로?|듯이?|면서)\\s*\\)");
+    /** 대사 앞 목록 기호와 끝에 남은 쉼표: "- 확산 모델이…", "-- 맞아! …거야.," (3차 실행) */
+    private static final Pattern LEADING_BULLET = Pattern.compile("^[-–—•·]+\\s*");
+    private static final Pattern TRAILING_COMMA = Pattern.compile("\\s*[,，]+$");
     private static final double SIMILAR_SCENE = 0.5;  // 바로 앞 컷 장면과 이만큼 비슷하면 다시 쓴다 (2차 실행 1쪽 2~7컷이 거의 같았다)
     /** 대사 안의 행동 설명: "… 거야. *박사님은 미소 지으며 설명한다.*" */
     private static final Pattern STAGE_DIRECTION = Pattern.compile("\\*+[^*]*\\*+");
@@ -45,7 +51,7 @@ public final class LineRules {
     public record Line(String speaker, String text) {
     }
 
-    /** 대사 정리: (해설: …)는 해설 줄로 꺼내고, *행동 설명*·번호 표시·빈 괄호·따옴표를 지우고, 줄바꿈을 띄어쓰기로 바꾼다. */
+    /** 대사 정리: (해설: …)는 해설 줄로 꺼내고, *행동 설명*·(괄호 행동 설명)·번호 표시·빈 괄호·따옴표·앞 기호를 지우고, 줄바꿈을 띄어쓰기로 바꾼다. */
     public static List<Line> tidy(List<Line> lines) {
         List<Line> result = new ArrayList<>();
         for (Line line : lines) {
@@ -56,9 +62,11 @@ public final class LineRules {
             }
             String text = NARRATION_IN_LINE.matcher(line.text()).replaceAll("");
             text = STAGE_DIRECTION.matcher(text).replaceAll("").replace("*", "");
+            text = ACTION_IN_PARENS.matcher(text).replaceAll("");
             text = MARK_IN_PARENS.matcher(text).replaceAll("");
             text = MARK.matcher(text).replaceAll("");
             text = clean(EMPTY_PARENS.matcher(text).replaceAll(""));
+            text = clean(TRAILING_COMMA.matcher(LEADING_BULLET.matcher(text).replaceFirst("")).replaceFirst(""));
             if (!text.isEmpty()) {
                 result.add(new Line(line.speaker(), text));
             }
@@ -99,11 +107,18 @@ public final class LineRules {
             Matcher intrusion = SCENE_INTRUSION.matcher(scene);
             if (intrusion.find()) {
                 // 응답 칸 이름(scene, lines)을 쓰면 AI가 그 말을 장면에 따라 적는다(2차 실행). 그래서 '장면 칸'이라고만 부른다
-                problems.add("장면 칸에 대사나 기호가 섞여 있다: \"%s\". 장면 칸에는 장소, 인물의 행동과 표정만 한국어 문장으로 쓴다. 대사, 기호(*, {, #), 참고 설명, 영어 칸 이름은 쓰지 않는다."
+                problems.add("장면 칸에 대사나 기호가 섞여 있다: \"%s\". 장면 칸에는 장소, 인물의 행동과 표정만 한국어 문장으로 쓴다. 따옴표로 인용한 대사, '질문한다:' 같은 쌍점, 기호(*, {, #), 참고 설명, 영어 칸 이름은 쓰지 않는다."
                         .formatted(shorten(scene.substring(intrusion.start()))));
             }
         }
+        if (lines.stream().allMatch(line -> clean(line.text()).isEmpty())) {
+            // 대사를 장면 칸에 넣어 버리면 대사 칸이 빈다(3차 실행: 사실 컷 1개, 연출 컷 2개)
+            problems.add("대사가 하나도 없다. 인물이 하는 말은 장면 칸이 아니라 대사 칸에 1개 이상 쓴다.");
+        }
         for (Line line : lines) {
+            if (ACTION_IN_PARENS.matcher(line.text()).find()) {
+                problems.add("대사에 괄호로 행동 설명이 들어 있다: \"%s\". 인물의 행동은 장면 칸에 쓰고, 대사에는 말만 쓴다.".formatted(shorten(line.text())));
+            }
             if (line.text().contains("*")) {
                 problems.add("대사에 '*' 꾸밈 기호가 들어 있다: \"%s\". 인물의 행동은 장면 칸에 쓰고, 대사에는 말만 쓴다.".formatted(shorten(line.text())));
             }
@@ -162,7 +177,11 @@ public final class LineRules {
             return clean(scene);
         }
         String before = clean(scene.substring(0, intrusion.start()));
-        return before.length() >= MIN_SCENE_LENGTH ? before : clean(SCENE_INTRUSION.matcher(scene).replaceAll(""));
+        int lastStop = before.lastIndexOf('.');
+        if (lastStop + 1 >= MIN_SCENE_LENGTH) {
+            before = before.substring(0, lastStop + 1);  // "…기다리고 있다. 누리는 눈빛을 집중시키며 질문한다" → 끝난 문장까지만
+        }
+        return before.length() >= MIN_SCENE_LENGTH ? before : clean(SCENE_INTRUSION.matcher(scene).replaceAll(" "));
     }
 
     private static String shorten(String text) {

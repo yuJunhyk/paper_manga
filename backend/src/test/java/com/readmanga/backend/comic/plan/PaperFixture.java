@@ -33,6 +33,8 @@ final class PaperFixture {
             for (int i = 0; i < (int) section[1]; i++, number++) {
                 String text = number % 25 == 0
                         ? "256 × 256 4.2 ↓ 3.1"  // 가끔 표 조각을 섞는다
+                        : number == 239
+                        ? "LDMs reduce computational requirements, but their sequential sampling is still slower than that of GANs."
                         : "Sentence " + number + " explains an important finding of the paper.";
                 sentences.add(new PaperSentence(job, number, (String) section[0], number / 30 + 1, text));
             }

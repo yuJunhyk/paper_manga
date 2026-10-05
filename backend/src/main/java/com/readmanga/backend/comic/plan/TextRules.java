@@ -1,8 +1,12 @@
 package com.readmanga.backend.comic.plan;
 
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.regex.MatchResult;
 import java.util.regex.Pattern;
 
 /**
@@ -32,6 +36,8 @@ public final class TextRules {
 
     /** 한계 섹션 (대사가 단점을 뒤집지 않는지 더 살핀다). */
     private static final Pattern LIMITATION_SECTION = Pattern.compile("limitation", Pattern.CASE_INSENSITIVE);
+
+    private static final Pattern ENGLISH_WORD = Pattern.compile("[A-Za-z]{3,}");
 
     private static final Pattern NOT_WORD_CHAR = Pattern.compile("[^가-힣A-Za-z0-9]");
 
@@ -63,6 +69,27 @@ public final class TextRules {
     /** 한글·영어가 섞인 단어들. 없으면 빈 문자열. */
     public static String mixedScriptWords(String text) {
         return MIXED_SCRIPT_WORD.matcher(text).results().map(match -> match.group()).reduce((a, b) -> a + ", " + b).orElse("");
+    }
+
+    /**
+     * text에 나온 영어 낱말(3글자 이상) 중 known(소문자)에 없는 것들. 논문에 없는 용어를 지어냈는지 보는 데 쓴다.
+     * 복수형은 같은 낱말로 본다 (논문은 'GANs', 대본은 'GAN'으로 쓰는 일이 흔하다).
+     */
+    public static List<String> unknownEnglishWords(String text, Set<String> known) {
+        return ENGLISH_WORD.matcher(text == null ? "" : text).results().map(MatchResult::group)
+                .filter(word -> !isKnown(word.toLowerCase(Locale.ROOT), known)).distinct().toList();
+    }
+
+    private static boolean isKnown(String word, Set<String> known) {
+        return known.contains(word) || known.contains(word + "s")
+                || (word.endsWith("s") && known.contains(word.substring(0, word.length() - 1)));
+    }
+
+    /** 논문 문장들에 나온 영어 낱말(소문자) */
+    public static Set<String> englishWords(Collection<String> texts) {
+        Set<String> words = new HashSet<>();
+        texts.forEach(text -> ENGLISH_WORD.matcher(text).results().forEach(match -> words.add(match.group().toLowerCase(Locale.ROOT))));
+        return words;
     }
 
     public static boolean hasMixedScript(String text) {

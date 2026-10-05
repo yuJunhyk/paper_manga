@@ -9,6 +9,13 @@ final class PlanPrompts {
     static final String TITLE_RULE = "영어 용어는 영어 그대로 쓰거나 한글로 옮겨 쓰되, 한 단어 안에서 한글과 영어를 섞지 않는다"
             + "(예: '라tent'(X), 'Latent' 또는 '잠재'(O)).";
 
+    /**
+     * 기술 용어는 한국어 뒤에 논문의 영어 원문을 괄호로 붙인다. 영어가 있으면 논문 원문과 대조해 지어낸 용어를 잡을 수 있다
+     * (3차 실행에서 'convolutional'을 '커널 필터링'으로 지어냈는데, 한국어라 대조하지 못했다).
+     */
+    static final String TERM_RULE = "기술 용어는 한국어로 쓰고 바로 뒤 괄호에 논문의 영어 원문을 붙인다"
+            + "(예: 잠재 공간(latent space), 컨볼루션 샘플링(convolutional sampling)). 논문에 없는 영어 용어는 만들지 않는다.";
+
     static final String OUTLINE_SYSTEM = "너는 연구 논문을 Why책 같은 학습 만화로 만드는 편집자다.";
 
     /** %1$s 논문 제목, %2$s 초록 */
@@ -37,7 +44,7 @@ final class PlanPrompts {
             이 부분의 앞부분 문장:
             %4$s
 
-            규칙: 반드시 위 섹션과 문장의 내용으로만 정한다.""" + " " + TITLE_RULE;
+            규칙: 반드시 위 섹션과 문장의 내용으로만 정한다.""" + " " + TERM_RULE + " " + TITLE_RULE;
 
     static final String FACT_SYSTEM = "너는 논문에서 핵심 사실을 정확하게 뽑는 연구 조교다. 문장에 적힌 내용만 쓰고, 적히지 않은 내용은 지어내지 않는다.";
 
@@ -60,7 +67,7 @@ final class PlanPrompts {
                '~을 평가했다', '~을 따랐다', '~로 실험했다'처럼 무엇을 했는지만 말하는 문장보다, 그래서 어떤 결과가 나왔는지(숫자, 비교, 발견)를 말하는 문장을 먼저 고른다.
             5. evidence에는 그 사실이 적힌 문장 번호를 1~3개 넣는다. 반드시 아래 목록에 있는 번호만 쓴다.
             6. 사실끼리 내용과 근거 문장이 겹치지 않게 한다. fact 안에 [11] 같은 번호를 쓰지 않는다.
-            7.""" + " " + TITLE_RULE + """
+            7.""" + " " + TERM_RULE + " " + TITLE_RULE + """
             %5$s
 
             논문 문장 (형식: [문장 번호] (p.페이지) 문장):

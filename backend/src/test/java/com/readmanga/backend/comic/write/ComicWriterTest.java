@@ -50,9 +50,10 @@ class ComicWriterTest {
                 // 칸 이름으로 받으므로 각 쪽의 흐름이 자기 칸에 들어간다. 흐름 안에 따옴표 대사, '**이름표**:', '2쪽:'도 섞는다(2차 실행)
                 content = """
                         {"setting":"누리의 풍경화 숙제가 몇 시간째 끝나지 않는다",
-                         "기":"**문제 제기**: 누리가 좌절해 박사님을 찾아간다 '도와주세요!'","승":"2쪽: 박사님이 방법을 알려 준다",
+                         "기":"**문제 제기**: 누리가 좌절해 박사님을 찾아간다 '도와주세요!'","승":"2쪽: 박사님이 %s 방법을 알려 준다",
                          "전":"실험 결과에 누리가 놀란다","결":"누리가 숙제를 끝내고 한계도 배운다",
-                         "ending":"누리가 그림을 완성하고 과학의 힘을 깨닫는다"}""";
+                         "ending":"누리가 그림을 완성하고 과학의 힘을 깨닫는다"}""".formatted(attempt == 1 ? "Kernel Filtering" : "")
+                        .replace("  ", " ");
             } else if (properties.containsKey("opening")) {
                 content = """
                         {"opening":{"scene":"누리의 방, 멈춘 컴퓨터 앞에서 누리가 한숨을 쉰다","lines":[{"speaker":"해설","text":"누리는 고민에 빠졌다."}]},
@@ -140,6 +141,18 @@ class ComicWriterTest {
         // 기호와 이름표는 먼저 다시 쓰게 하고(가짜 AI는 같은 답을 내서), 그래도 남으면 코드가 지운다
         assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
                 .anyMatch(content -> content.contains("이야기 뼈대에 서식 기호"));
+    }
+
+    @Test
+    void 이야기_뼈대에_논문에_없는_영어_용어가_있으면_다시_쓰게_한다() {
+        FakeAi ai = new FakeAi();
+        WrittenComic comic = writer(ai).write(plan(), sentences(), (done, total) -> {
+        });
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
+                .anyMatch(content -> content.contains("논문에 없는 영어 용어가 있다: Kernel, Filtering"));
+        assertThat(comic.pages().get(1).beat()).doesNotContain("Kernel");
+        assertThat(ai.requests.getFirst().get(1).content()).as("이야기 뼈대 지시문에 용어 규칙").contains("괄호에 논문의 영어 원문");
     }
 
     @Test

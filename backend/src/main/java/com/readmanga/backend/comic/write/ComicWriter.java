@@ -19,6 +19,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * 만화 설계도로 대본을 쓴다 (AI: exaone).
@@ -70,11 +71,15 @@ public class ComicWriter {
         int doneSteps = 0;
         listener.update(0, totalSteps);  // 시작하자마자 0/전체를 보여 준다 (0/0이면 멈춤과 대기를 구분할 수 없다)
         String model = properties.dialogueModel();
+        // 이야기 뼈대·연출 컷은 사실 검사를 받지 않아 논문에 없는 용어를 지어내도 걸러지지 않았다(3차 실행 '커널 필터링').
+        // 영어 낱말만은 논문 원문과 대조할 수 있다. 한국어로 음차된 용어는 코드로 대조하지 못한다
+        Set<String> paperWords = TextRules.englishWords(sentencesByNumber.values().stream()
+                .flatMap(sentence -> Stream.of(sentence.getText(), String.valueOf(sentence.getSectionTitle()))).toList());
 
         // ① 이야기 뼈대
         List<String> roles = plan.pages().stream().map(ComicPlan.PagePlan::role).toList();
         AiAsker.Answer<Map> story = aiAsker.ask(model, WritePrompts.STORY_SYSTEM, storyPrompt(plan), storySchema(roles),
-                Map.class, answer -> storyProblems((Map<String, Object>) answer), STORY_RETRIES);
+                Map.class, answer -> storyProblems((Map<String, Object>) answer, paperWords), STORY_RETRIES);
         story.attempts().forEach(attempt -> servers.add(attempt.server()));
         listener.update(++doneSteps, totalSteps);
         Map<String, Object> storyValue = story.value();
@@ -92,14 +97,14 @@ public class ComicWriter {
             for (ComicPlan.FactPlan fact : page.facts()) {
                 String sceneBefore = factPanels.isEmpty() ? previousScene : factPanels.getLast().scene();
                 WrittenComic.Panel panel = writeFactPanel(model, plan, page, setting, beat, sceneBefore, fact, sentencesByNumber,
-                        seenLines, servers);
+                        seenLines, paperWords, servers);
                 factPanels.add(panel);
                 listener.update(++doneSteps, totalSteps);
             }
 
             String lastFactScene = factPanels.isEmpty() ? previousScene : factPanels.getLast().scene();
             List<WrittenComic.Panel> staging = writeStagingPanels(model, plan, page, setting, beat, ending, previousScene,
-                    lastFactScene, seenLines, servers);
+                    lastFactScene, seenLines, paperWords, servers);
             listener.update(++doneSteps, totalSteps);
 
             List<WrittenComic.Panel> panels = new ArrayList<>();
@@ -117,7 +122,7 @@ public class ComicWriter {
     private WrittenComic.Panel writeFactPanel(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting, String beat,
                                               String sceneBefore, ComicPlan.FactPlan fact,
                                               Map<Integer, PaperSentence> sentencesByNumber, Set<String> seenLines,
-                                              Set<String> servers) {
+                                              Set<String> paperWords, Set<String> servers) {
         String quotes = fact.evidence().stream()
                 .map(number -> "[%d] %s".formatted(number, shorten(sentencesByNumber.get(number).getText(), 200)))
                 .collect(Collectors.joining(" / "));
@@ -132,6 +137,8 @@ public class ComicWriter {
                     if (limitation) {
                         problems.addAll(LineRules.limitationProblems(lines(value)));
                     }
+                    problems.addAll(unknownTermProblems("사실 컷", value.scene() + " "
+                            + value.lines().stream().map(LineAnswer::text).collect(Collectors.joining(" ")), paperWords));
                     return problems;
                 }, PANEL_RETRIES);
         answer.attempts().forEach(attempt -> servers.add(attempt.server()));
@@ -145,7 +152,7 @@ public class ComicWriter {
 
     private List<WrittenComic.Panel> writeStagingPanels(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting,
                                                         String beat, String ending, String previousScene, String lastFactScene,
-                                                        Set<String> seenLines, Set<String> servers) {
+                                                        Set<String> seenLines, Set<String> paperWords, Set<String> servers) {
         boolean firstPage = page.pageNumber() == 1;
         boolean lastPage = page.pageNumber() == plan.pages().size();
         String prompt = WritePrompts.STAGING.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
@@ -159,6 +166,9 @@ public class ComicWriter {
                     List<String> problems = new ArrayList<>(
                             LineRules.problems(value.opening().scene(), lines(value.opening()), seenLines, previousScene));
                     problems.addAll(LineRules.problems(value.closing().scene(), lines(value.closing()), seenLines, lastFactScene));
+                    problems.addAll(unknownTermProblems("연출 컷", Stream.of(value.opening(), value.closing())
+                            .flatMap(answerPanel -> Stream.concat(Stream.of(answerPanel.scene()), answerPanel.lines().stream().map(LineAnswer::text)))
+                            .collect(Collectors.joining(" ")), paperWords));
                     return problems;
                 }, PANEL_RETRIES);
         answer.attempts().forEach(attempt -> servers.add(attempt.server()));
@@ -178,7 +188,7 @@ public class ComicWriter {
                         page.chunks().stream().map(ComicPlan.ChunkPlan::title).collect(Collectors.joining(", "))))
                 .collect(Collectors.joining("\n"));
         String roleKeys = plan.pages().stream().map(page -> "'" + page.role() + "'").collect(Collectors.joining(", "));
-        return WritePrompts.STORY.formatted(plan.pages().size(), roleKeys, plan.comicTitle(), pages);
+        return WritePrompts.STORY.formatted(plan.pages().size(), roleKeys, plan.comicTitle(), pages, WritePrompts.TERM_RULE);
     }
 
     /** 쪽별 흐름을 순서 있는 목록 대신 '기', '승', '전', '결' 이름 칸으로 받는다 (7차 시험에서 한 칸씩 밀려서). */
@@ -209,14 +219,21 @@ public class ComicWriter {
         return oneLine(BEAT_LABEL.matcher(text).replaceFirst(""));
     }
 
-    /** 이야기 뼈대 검사: 섞인 단어, 서식 기호·'1쪽:' 이름표 */
-    private static List<String> storyProblems(Map<String, Object> story) {
+    /** 이야기 뼈대 검사: 섞인 단어, 서식 기호·'1쪽:' 이름표, 논문에 없는 영어 용어 */
+    private static List<String> storyProblems(Map<String, Object> story, Set<String> paperWords) {
         List<String> values = story.values().stream().map(String::valueOf).toList();
         List<String> problems = new ArrayList<>(mixedScriptProblems("이야기 뼈대", String.join(" ", values)));
+        problems.addAll(unknownTermProblems("이야기 뼈대", String.join(" ", values), paperWords));
         if (values.stream().anyMatch(value -> STORY_MARKUP.matcher(value).find())) {
             problems.add("이야기 뼈대에 서식 기호(*, #, {)나 '1쪽:' 같은 이름표가 있다. 기호와 이름표 없이 문장만 쓴다.");
         }
         return problems;
+    }
+
+    private static List<String> unknownTermProblems(String label, String text, Set<String> paperWords) {
+        List<String> unknown = TextRules.unknownEnglishWords(text, paperWords);
+        return unknown.isEmpty() ? List.of() : List.of("%s에 논문에 없는 영어 용어가 있다: %s. 기술 이름은 다룰 내용에 나온 것만 쓰고 지어내지 않는다."
+                .formatted(label, String.join(", ", unknown)));
     }
 
     private static String oneLine(String text) {

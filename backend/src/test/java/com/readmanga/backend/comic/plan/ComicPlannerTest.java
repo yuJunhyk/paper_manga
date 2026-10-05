@@ -47,12 +47,12 @@ class ComicPlannerTest {
                 String sections = matcher.find() ? matcher.group(1) : "?";
                 content = "{\"title\":\"%s\",\"summary\":\"요약\"}".formatted(sections.replace("\"", ""));
             } else {
-                content = facts(prompt);
+                content = facts(prompt, retry);
             }
             return new ChatResult(content, OllamaServer.PRIMARY, 100, 50, 10);
         }
 
-        private static String facts(String prompt) {
+        private static String facts(String prompt, boolean retry) {
             List<Integer> numbers = new ArrayList<>();
             Matcher matcher = SENTENCE_NUMBER.matcher(prompt);
             while (matcher.find()) {
@@ -73,6 +73,13 @@ class ComicPlannerTest {
                         {"facts":[
                           {"fact":"확산 모델은 이미지 생성에서 최고 수준의 결과를 낸다 [11].","evidence":[1]},
                           {"fact":"기존 확산 모델은 계산 비용이 매우 크다.","evidence":[3, 999]}]}""";
+            }
+            if (first == 49 && !retry) {
+                // 셋째 조각 첫 시도: 논문에 없는 영어 용어를 지어냄 (3차 실행의 '커널 필터링')
+                return """
+                        {"facts":[
+                          {"fact":"이 연구는 커널 필터링(kernel filtering)으로 샘플링을 빠르게 했다.","evidence":[%1$d]},
+                          {"fact":"마지막 문장 %2$d번에는 두 번째 결과가 나온다.","evidence":[%2$d]}]}""".formatted(first, numbers.getLast());
             }
             if (first == 19) {
                 // 둘째 조각: 첫 조각 사실과 거의 같은 문장 → 버려야 한다
@@ -181,5 +188,17 @@ class ComicPlannerTest {
         assertThat(plan.pages().getFirst().chunks().get(1).droppedFacts())
                 .containsExactly("확산 모델은 이미지 생성에서 최고 수준의 결과를 냈다.");
         assertThat(plan.stats().servers()).containsExactly("주 서버");
+    }
+
+    @Test
+    void 논문에_없는_영어_용어로_쓴_사실은_다시_쓰게_하고_지시문에는_용어_규칙이_들어간다() {
+        FakeAi ai = new FakeAi();
+        ComicPlan plan = planner(ai).plan("Latent Diffusion", PaperFixture.sentences());
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
+                .anyMatch(content -> content.contains("1번 사실에 논문에 없는 영어 용어가 있다: kernel, filtering"));
+        assertThat(plan.pages().getFirst().facts()).extracting(ComicPlan.FactPlan::fact).noneMatch(fact -> fact.contains("kernel"));
+        assertThat(ai.promptsOf("이 부분에 맞는 소제목")).allMatch(prompt -> prompt.contains("괄호에 논문의 영어 원문"));
+        assertThat(ai.promptsOf("핵심 사실")).allMatch(prompt -> prompt.contains("괄호에 논문의 영어 원문"));
     }
 }

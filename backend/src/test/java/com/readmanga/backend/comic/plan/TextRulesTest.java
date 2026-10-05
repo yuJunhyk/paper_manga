@@ -2,6 +2,9 @@ package com.readmanga.backend.comic.plan;
 
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
+import java.util.Set;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** 시험 단계(Python)에서 정한 규칙과 기준값이 Java에서도 같게 나오는지 확인한다. */
@@ -53,5 +56,16 @@ class TextRulesTest {
     void 사실_문장의_번호를_지운다() {
         assertThat(TextRules.removeCitations("확산 모델은 뛰어나다 [11].")).isEqualTo("확산 모델은 뛰어나다.");
         assertThat(TextRules.removeCitations("효율을 높인다 [62, 63]")).isEqualTo("효율을 높인다");
+    }
+
+    @Test
+    void 논문에_없는_영어_용어를_찾는다() {
+        Set<String> paper = TextRules.englishWords(List.of(
+                "We apply cross-attention based conditioning and convolutional sampling in the latent space of LDM."));
+
+        assertThat(TextRules.unknownEnglishWords("트랜스포머와 Kernel Filtering을 결합한 Latent Space", paper))
+                .containsExactly("Kernel", "Filtering");
+        assertThat(TextRules.unknownEnglishWords("'Cross-Attention Based Conditioning' 문구와 LDM", paper)).isEmpty();
+        assertThat(TextRules.unknownEnglishWords("LDMs와 latent spaces", paper)).as("복수형은 같은 낱말").isEmpty();
     }
 }
