@@ -10,6 +10,15 @@ Before acting on any prompt/instruction the user gives in this project, first im
 4. Review the result and repeat steps 1–3 until no further improvement is possible.
 5. Present the improved prompt briefly, then proceed with the task based on it.
 
+### 재작성을 생략하는 경우
+
+짧고 뜻이 분명한 지시는 재작성 없이 바로 수행한다. 예:
+- 승인·선택·짧은 답: "진행", "go", "남기고 푸쉬까지 진행", "A로 하자", "1, 2번 진행해줘"
+- 한 가지 일만 시키는 명령: "업로드해줘", "결과 확인해줘", "서버 상태 봐줘"
+- 바로 앞 답변에 대한 짧은 질문: "그게 무슨 뜻이야?", "왜 그래?"
+
+여러 단계가 얽혀 있거나, 뜻이 모호하거나, 새로운 작업을 처음 시키는 지시는 위 워크플로우대로 재작성한다. 애매하면 재작성한다.
+
 ### 실행 규칙
 
 - **1~4단계(프롬프트 재작성)는 Sonnet 모델에 위임한다.** Agent 도구를 `model: "sonnet"`, `run_in_background: false`로 호출해 개선된 프롬프트를 받아온 뒤, 5단계(제시)와 실제 작업 수행은 메인 모델이 담당한다. 결과를 기다려야 하므로 백그라운드 실행하지 않는다.
