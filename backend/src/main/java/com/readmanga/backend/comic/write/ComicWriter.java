@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * 만화 설계도로 대본을 쓴다 (AI: exaone).
+ * 만화 설계도로 대본을 쓴다 (AI: 설정의 ollama.dialogue-model, 2026-10-06부터 gemma4).
  * ① 이야기 뼈대: 배경 사건, 쪽별 흐름(기·승·전·결 이름 칸), 결말
  * ② 쪽마다 사실 컷을 하나씩 따로 쓴다. 요청마다 사실이 하나뿐이라 다른 사실과 섞일 수 없다(5차 시험의 한 칸 밀림 방지).
  *    사실 컷의 해설은 AI가 아니라 코드가 검증된 사실 문장으로 넣는다(6차 시험의 덧붙임 방지).
