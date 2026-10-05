@@ -84,4 +84,29 @@ class TextRulesTest {
         assertThat(TextRules.removeCitations("잠재 확산 모델은 샘플링 속도가 느리다(239, 240).")).isEqualTo("잠재 확산 모델은 샘플링 속도가 느리다.");
         assertThat(TextRules.removeCitations("FID가 1.6배(1.6x) 개선됐다 (239번)")).isEqualTo("FID가 1.6배(1.6x) 개선됐다");
     }
+
+    @Test
+    void 비교와_숫자가_있는_문장을_결과_문장으로_본다() {
+        assertThat(TextRules.resultScore("Participants achieved a significantly higher CorrectRate with DC (median = 0.750) than with CV.")).isGreaterThanOrEqualTo(2);
+        assertThat(TextRules.resultScore("Participants working with data comics achieved on average 28.1% higher accuracy.")).isGreaterThanOrEqualTo(2);
+        assertThat(TextRules.resultScore("Overall, we observe a speed-up of at least 2.7× while improving FID scores.")).isGreaterThanOrEqualTo(2);
+        assertThat(TextRules.resultScore("To address RQ1, we compared the effectiveness of data comics and conventional visualisations.")).isLessThan(2);
+        assertThat(TextRules.resultScore("We selected the globally relevant topics of climate change and global warming.")).isZero();
+    }
+
+    @Test
+    void 정한_번역_대신_다른_번역을_쓴_곳을_찾는다() {
+        List<ComicPlan.Term> terms = List.of(new ComicPlan.Term("data comics", "데이터 만화", List.of("데이터 코믹스", "만화")));
+
+        assertThat(TextRules.termVariants("데이터 코믹스는 데이터 만화와 같다", terms)).containsExactly("'데이터 코믹스' → '데이터 만화'");
+        assertThat(TextRules.termVariants("데이터 만화(data comics)는 쉽다", terms)).as("정한 번역 안의 '만화'는 문제 아님").isEmpty();
+    }
+
+    @Test
+    void 영어_원문_자리에_한국어만_든_괄호를_찾는다() {
+        assertThat(TextRules.koreanParenthesisProblems("1번 사실", "학생들은 윤리적 문제(윤리적 문제)를 가지고 있다")).singleElement().asString()
+                .contains("(윤리적 문제)");
+        assertThat(TextRules.koreanParenthesisProblems("흐름", "시각 자료 이해 능력(시각 자료 이해력)이 중요하다")).hasSize(1);
+        assertThat(TextRules.koreanParenthesisProblems("1번 사실", "잠재 공간(latent space)에서 정답률이 높았다(중앙값 0.750, N=54)")).isEmpty();
+    }
 }

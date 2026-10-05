@@ -1,5 +1,6 @@
 package com.readmanga.backend.comic.plan;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
@@ -47,6 +48,18 @@ public final class TextRules {
     private static final Pattern LIMITATION_SECTION = Pattern.compile("limitation", Pattern.CASE_INSENSITIVE);
 
     private static final Pattern ENGLISH_WORD = Pattern.compile("[A-Za-z]{3,}");
+
+    /** 결과를 말하는 문장의 신호: 비교·변화 낱말과 숫자 결과(0.750, 28.1%, 2.7×, p < 0.05). 특정 분야의 낱말은 넣지 않는다. */
+    private static final Pattern RESULT_WORD = Pattern.compile(
+            "\\b(significant\\w*|outperform\\w*|higher|lower|better|worse|improv\\w*|faster|slower|increas\\w*|decreas\\w*|reduc\\w*|gains?|than)\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern RESULT_NUMBER = Pattern.compile("\\d+(\\.\\d+)?\\s*(%|×)|\\b\\d*\\.\\d+|\\bp\\s*[<=]");
+
+    /**
+     * 영어 원문 자리에 한국어만 든 괄호: "윤리적 문제(윤리적 문제)", "시각 자료 이해 능력(시각 자료 이해력)" (180번).
+     * 숫자·기호가 섞인 괄호("(중앙값 0.750)", "(N=54)")는 설명이라 잡지 않는다.
+     */
+    private static final Pattern KOREAN_ONLY_PARENS = Pattern.compile("\\(\\s*[가-힣]+(\\s+[가-힣]+)*\\s*\\)");
 
     private static final Pattern NOT_WORD_CHAR = Pattern.compile("[^가-힣A-Za-z0-9]");
 
@@ -111,6 +124,43 @@ public final class TextRules {
 
     public static String removeCitations(String text) {
         return PAREN_NUMBER.matcher(CITATION.matcher(text).replaceAll("")).replaceAll("").trim();
+    }
+
+    /** 결과 문장다운 정도: 서로 다른 비교·변화 낱말 수 + 숫자 결과가 있으면 1. 2 이상이면 결과 문장으로 본다. */
+    public static int resultScore(String sentence) {
+        if (sentence == null) {
+            return 0;
+        }
+        long words = RESULT_WORD.matcher(sentence).results().map(match -> match.group().toLowerCase(Locale.ROOT)).distinct().count();
+        return (int) words + (RESULT_NUMBER.matcher(sentence).find() ? 1 : 0);
+    }
+
+    /**
+     * 정한 번역 대신 다른 번역(variants)을 쓴 곳: "'데이터 코믹스' → '데이터 만화'".
+     * 정한 번역 안에 든 말은 빼고 찾는다 (variant '만화'가 '데이터 만화' 안에 있어도 문제가 아니다).
+     */
+    public static List<String> termVariants(String text, List<ComicPlan.Term> terms) {
+        List<String> found = new ArrayList<>();
+        for (ComicPlan.Term term : terms) {
+            String rest = text == null ? "" : text.replace(term.korean(), " ");
+            term.variants().stream().filter(rest::contains).findFirst()
+                    .ifPresent(variant -> found.add("'%s' → '%s'".formatted(variant, term.korean())));
+        }
+        return found;
+    }
+
+    /** 다른 번역을 쓴 곳을 다시 쓰게 하는 문제 문장. 없으면 빈 목록. */
+    public static List<String> termVariantProblems(String label, String text, List<ComicPlan.Term> terms) {
+        List<String> found = termVariants(text, terms);
+        return found.isEmpty() ? List.of()
+                : List.of("%s에 정한 번역과 다른 용어가 있다: %s. 용어는 정한 번역으로 통일한다.".formatted(label, String.join(", ", found)));
+    }
+
+    /** 영어 원문 자리에 한국어를 넣은 괄호를 다시 쓰게 하는 문제 문장. 없으면 빈 목록. */
+    public static List<String> koreanParenthesisProblems(String label, String text) {
+        List<String> found = KOREAN_ONLY_PARENS.matcher(text == null ? "" : text).results().map(MatchResult::group).distinct().toList();
+        return found.isEmpty() ? List.of() : List.of("%s의 괄호에 영어 원문 대신 한국어가 들어 있다: %s. 괄호에는 논문의 영어 원문만 쓰고, 한국어 설명은 괄호 없이 문장으로 쓴다."
+                .formatted(label, String.join(", ", found)));
     }
 
     public static boolean isCaption(String sentence) {

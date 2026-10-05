@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -52,7 +53,7 @@ class ComicWriterTest {
                         {"setting":"누리의 풍경화 숙제가 몇 시간째 끝나지 않는다",
                          "기":"**문제 제기**: 누리가 좌절해 박사님을 찾아간다 '도와주세요!'","승":"2쪽: 박사님이 %s 방법을 알려 준다",
                          "전":"실험 결과에 누리가 놀란다","결":"누리가 숙제를 끝내고 한계도 배운다",
-                         "ending":"누리가 그림을 완성하고 과학의 힘을 깨닫는다"}""".formatted(attempt == 1 ? "Kernel Filtering" : "")
+                         "ending":"누리가 그림을 완성하고 과학의 힘을 깨닫는다"}""".formatted(attempt == 1 ? "Kernel Filtering 데이터 코믹스 흥미(학습 몰입도)" : "")
                         .replace("  ", " ");
             } else if (properties.containsKey("opening")) {
                 content = """
@@ -207,5 +208,34 @@ class ComicWriterTest {
 
         assertThat(progress).hasSize(14).first().isEqualTo("0/13");
         assertThat(progress).last().isEqualTo("13/13");
+    }
+
+    @Test
+    void 대본_지시문에는_첫_논문의_소재가_예시로_남아_있지_않다() {
+        // 두 번째 논문(176번)의 이야기에 예시 '숙제로 고화질 그림을…'이 '고화질 데이터 시각화 만화'로 새어 나왔다
+        assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE, WritePrompts.CHARACTERS, WritePrompts.STYLE_EXAMPLE,
+                WritePrompts.STORY, WritePrompts.LIMITATION_RULE, WritePrompts.FACT_PANEL, WritePrompts.STAGING))
+                .noneMatch(prompt -> prompt.contains("잠재") || prompt.contains("확산") || prompt.contains("GAN") || prompt.contains("고화질"));
+        assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE))
+                .as("예시 낱말은 무엇이든 새어 나온다 (178번 '표본 크기(sample size)')").noneMatch(prompt -> prompt.contains("예:"));
+    }
+
+    @Test
+    void 정한_용어_번역을_지시문에_붙이고_다른_번역을_쓴_이야기는_다시_쓰게_한다() {
+        FakeAi ai = new FakeAi();
+        ComicPlan base = plan();
+        ComicPlan plan = new ComicPlan(base.comicTitle(), base.pages(), base.stats(),
+                List.of(new ComicPlan.Term("data comics", "데이터 만화", List.of("데이터 코믹스"))));
+
+        writer(ai).write(plan, sentences(), (done, total) -> { });
+
+        assertThat(ai.requests).allMatch(messages -> messages.getFirst().content().contains("- data comics → 데이터 만화 (쓰지 않을 말: 데이터 코믹스)"));
+        assertThat(ai.requests.get(1).getLast().content()).contains("이야기 뼈대에 정한 번역과 다른 용어가 있다: '데이터 코믹스' → '데이터 만화'")
+                .contains("이야기 뼈대의 괄호에 영어 원문 대신 한국어가 들어 있다: (학습 몰입도)");
+    }
+
+    @Test
+    void 이야기_흐름에서_인용_표시와_수식_기호를_지운다() {
+        assertThat(ComicWriter.beat(">누리는 다운샘플링 계수 $f$를 바꿔 본다")).isEqualTo("누리는 다운샘플링 계수 f를 바꿔 본다");
     }
 }

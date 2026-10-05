@@ -5,13 +5,18 @@ import com.readmanga.backend.ai.ChatMessage;
 import com.readmanga.backend.ai.ChatResult;
 import com.readmanga.backend.ai.OllamaProperties;
 import com.readmanga.backend.ai.OllamaServer;
+import com.readmanga.backend.paper.PaperJob;
+import com.readmanga.backend.paper.PaperSentence;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.stream.Stream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -46,6 +51,12 @@ class ComicPlannerTest {
                 Matcher matcher = CHUNK_SECTIONS.matcher(prompt);
                 String sections = matcher.find() ? matcher.group(1) : "?";
                 content = "{\"title\":\"%s\",\"summary\":\"요약\"}".formatted(sections.replace("\"", ""));
+            } else if (properties.containsKey("terms")) {
+                // 용어 정하기: 논문에 없는 영어('kernel filtering')는 빼고, 정한 번역과 같거나 그 안에 든 다른 번역도 뺀다
+                content = """
+                        {"terms":[
+                          {"english":"Latent Diffusion Models","korean":"잠재 확산 모델","variants":["레이턴트 디퓨전 모델","잠재 확산 모델","확산"]},
+                          {"english":"kernel filtering","korean":"커널 필터링","variants":[]}]}""";
             } else if (properties.containsKey("results")) {
                 content = verify(prompt);
             } else {
@@ -100,6 +111,13 @@ class ComicPlannerTest {
                 return """
                         {"facts":[
                           {"fact":"이 연구는 커널 필터링(kernel filtering)으로 샘플링을 빠르게 했다.","evidence":[%1$d]},
+                          {"fact":"마지막 문장 %2$d번에는 두 번째 결과가 나온다.","evidence":[%2$d]}]}""".formatted(first, numbers.getLast());
+            }
+            if (numbers.contains(130) && !retry) {
+                // 정한 번역 대신 소리 나는 대로 옮긴 말을 씀 → 다시 쓰기
+                return """
+                        {"facts":[
+                          {"fact":"레이턴트 디퓨전 모델은 문장 %1$d번의 발견을 보여 준다.","evidence":[%1$d]},
                           {"fact":"마지막 문장 %2$d번에는 두 번째 결과가 나온다.","evidence":[%2$d]}]}""".formatted(first, numbers.getLast());
             }
             if (first == 19) {
@@ -172,9 +190,9 @@ class ComicPlannerTest {
         List<String> factPrompts = ai.promptsOf("이 항목의 원래 섹션:");
         assertThat(factPrompts).hasSize(12);
         assertThat(factPrompts.getLast()).contains("이 항목의 원래 섹션: Limitations & Societal Impact, Conclusion")
-                .contains("'잠재'(O)).\n8. 이 부분에는 연구의 한계가 들어 있다.");   // 8번 규칙이 7번 다음 줄에 붙는다
+                .contains("쓰지 않는다).\n8. 이 부분에는 연구의 한계가 들어 있다.");   // 8번 규칙이 7번 다음 줄에 붙는다
         assertThat(factPrompts.subList(0, 11)).noneMatch(prompt -> prompt.contains("반드시 한계"))
-                .allMatch(prompt -> prompt.contains("'잠재'(O)).\n\n논문 문장"));       // 다른 조각은 7번 다음에 바로 문장 목록
+                .allMatch(prompt -> prompt.contains("쓰지 않는다).\n용어 번역 (만화 전체에서"));       // 다른 조각은 7번 다음에 바로 문장 목록
     }
 
     @Test
@@ -243,5 +261,84 @@ class ComicPlannerTest {
 
         assertThat(ai.promptsOf("핵심 사실")).filteredOn(prompt -> prompt.contains("[180]"))
                 .singleElement().asString().doesNotContain("[181]");
+    }
+
+    @Test
+    void 쪽마다_사실은_6개를_넘지_않고_한계_조각_보너스는_마지막_쪽에만_준다() {
+        Chunk results = new Chunk(195, 232, List.of("Preliminary Exploration", "Effectiveness of Data Comics"));
+        Chunk benefits = new Chunk(233, 256, List.of("Perceived Benefits and Limitations"));
+        Chunk perceived = new Chunk(257, 283, List.of("Perceived Limitations"));
+        assertThat(ComicPlanner.factCounts(List.of(results, benefits, perceived), false))
+                .as("가운데 쪽의 'Perceived Limitations'는 논문의 한계 섹션이 아니다 (176번 3쪽 10컷)").containsExactly(2, 2, 2);
+
+        Chunk discussion = new Chunk(320, 338, List.of("Summary of the Results and Discussion"));
+        Chunk implications = new Chunk(339, 352, List.of("Implications for HCI"));
+        Chunk limitations = new Chunk(353, 393, List.of("Limitations and Future Work", "Conclusion"));
+        assertThat(ComicPlanner.factCounts(List.of(discussion, implications, limitations), true))
+                .as("마지막 한계 조각만 3개, 가장 짧은 다른 조각을 줄여 6개").containsExactly(2, 1, 3);
+    }
+
+    @Test
+    void 설계도의_모든_쪽은_사실이_6개_이하다() {
+        ComicPlan plan = planner(new FakeAi()).plan("Latent Diffusion", PaperFixture.sentences());
+
+        assertThat(plan.pages()).allSatisfy(page -> assertThat(page.facts().size()).isLessThanOrEqualTo(ComicPlanner.MAX_FACTS_PER_PAGE));
+    }
+
+    @Test
+    void 사실이_한_섹션에서만_나오면_다른_섹션의_결과_문장을_알려_주며_다시_고르게_한다() {
+        PaperJob job = new PaperJob("comics.pdf");
+        Map<Integer, PaperSentence> byNumber = new LinkedHashMap<>();
+        String[][] sentences = {
+                {"195", "Preliminary Exploration", "Our exploration revealed that participants' overall accuracy was moderate (median: 0.500, IQR: 0.250)."},
+                {"196", "Preliminary Exploration", "Participants performed better on retrieval questions (median = 0.667) than on comprehension questions."},
+                {"197", "Preliminary Exploration", "This difference was significant."},
+                {"205", "Effectiveness of Data Comics", "To address RQ1, we compared the effectiveness of data comics and conventional visualisations."},
+                {"206", "Effectiveness of Data Comics", "Participants achieved a significantly higher CorrectRate with DC (median = 0.750) than with CV (median = 0.333)."},
+                {"207", "Effectiveness of Data Comics", "We report effect sizes for each comparison."},
+        };
+        Map<String, List<Integer>> bySection = new LinkedHashMap<>();
+        for (String[] row : sentences) {
+            int number = Integer.parseInt(row[0]);
+            byNumber.put(number, new PaperSentence(job, number, row[1], 10, row[2]));
+            bySection.computeIfAbsent(row[1], key -> new ArrayList<>()).add(number);
+        }
+        Set<Integer> allowed = byNumber.keySet();
+
+        ComicPlanner.FactsAnswer front = new ComicPlanner.FactsAnswer(List.of(
+                new ComicPlanner.FactItem("참가자들의 정확도는 보통이었다.", List.of(195)),
+                new ComicPlanner.FactItem("정보 찾기 문제를 더 잘 풀었다.", List.of(196))));
+        assertThat(ComicPlanner.spreadProblems(front, allowed, bySection, byNumber)).singleElement().asString()
+                .contains("'Preliminary Exploration' 섹션에서만").contains("Effectiveness of Data Comics").contains("[206]")
+                .doesNotContain("[207]");
+
+        ComicPlanner.FactsAnswer spread = new ComicPlanner.FactsAnswer(List.of(
+                new ComicPlanner.FactItem("참가자들의 정확도는 보통이었다.", List.of(195)),
+                new ComicPlanner.FactItem("데이터 만화의 정답률이 더 높았다.", List.of(206))));
+        assertThat(ComicPlanner.spreadProblems(spread, allowed, bySection, byNumber)).isEmpty();
+    }
+
+    @Test
+    void 사실_지시문에는_첫_논문의_소재가_예시로_남아_있지_않다() {
+        // 사실 확인(VERIFY)의 예시는 판정 연습용이라 AI가 글로 옮겨 쓰지 않으므로 뺀다
+        assertThat(Stream.of(PlanPrompts.TITLE_RULE, PlanPrompts.TERM_RULE, PlanPrompts.OUTLINE_SYSTEM, PlanPrompts.COMIC_TITLE,
+                PlanPrompts.CHUNK_TITLE, PlanPrompts.FACT_SYSTEM, PlanPrompts.LIMITATION_RULE, PlanPrompts.FACTS))
+                .noneMatch(prompt -> prompt.contains("잠재") || prompt.contains("확산") || prompt.contains("GAN") || prompt.contains("고화질"));
+        assertThat(Stream.of(PlanPrompts.TITLE_RULE, PlanPrompts.TERM_RULE, PlanPrompts.GLOSSARY))
+                .as("예시 낱말은 무엇이든 새어 나온다 (178번 '표본 크기(sample size)')").noneMatch(prompt -> prompt.contains("예:"));
+    }
+
+    @Test
+    void 용어_번역은_처음에_한_번_정해_사실_요청에_붙이고_다른_번역을_쓴_사실은_다시_쓰게_한다() {
+        FakeAi ai = new FakeAi();
+        ComicPlan plan = planner(ai).plan("Latent Diffusion", PaperFixture.sentences());
+
+        assertThat(plan.terms()).containsExactly(new ComicPlan.Term("Latent Diffusion Models", "잠재 확산 모델", List.of("레이턴트 디퓨전 모델")));
+        assertThat(ai.promptsOf("이 항목의 원래 섹션:"))
+                .allMatch(prompt -> prompt.contains("- Latent Diffusion Models → 잠재 확산 모델 (쓰지 않을 말: 레이턴트 디퓨전 모델)"));
+        assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
+                .anyMatch(content -> content.contains("1번 사실에 정한 번역과 다른 용어가 있다: '레이턴트 디퓨전 모델' → '잠재 확산 모델'"));
+        assertThat(plan.pages().stream().flatMap(page -> page.facts().stream()).map(ComicPlan.FactPlan::fact))
+                .noneMatch(fact -> fact.contains("레이턴트"));
     }
 }
