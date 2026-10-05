@@ -167,15 +167,17 @@ class OllamaClientTest {
     }
 
     @Test
-    void qwen3에는_생각하기를_끄고_모델마다_정한_읽을_길이를_보낸다() throws IOException {
+    void qwen3과_gemma4에는_생각하기를_끄고_모델마다_정한_읽을_길이를_보낸다() throws IOException {
         OllamaClient client = client(fakeOllama("desktop"), CLOSED_PORT_URL);
 
         client.chat("qwen3:8b", hello(), SCHEMA);
         client.chat("exaone3.5:7.8b", hello(), SCHEMA);
+        client.chat("gemma4:e4b", hello(), SCHEMA);
 
         assertThat(receivedBodies.get(0)).contains("\"think\":false").contains("\"num_ctx\":16384").contains("\"stream\":false")
                 .contains("\"num_predict\":1500").contains("\"repeat_penalty\":1.1");
         assertThat(receivedBodies.get(1)).doesNotContain("think").contains("\"num_ctx\":8192").contains("\"num_predict\":1500");
+        assertThat(receivedBodies.get(2)).contains("\"think\":false");
     }
 
     @Test

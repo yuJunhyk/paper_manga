@@ -210,8 +210,9 @@ public class OllamaClient implements AiChatClient {
         // 모델이 같은 말을 반복하는 고리에 빠지면 답이 끝나지 않고 생성 창구(1개)를 계속 차지했다
         body.put("options", Map.of("num_ctx", contextLength, "num_predict", properties.maxOutputTokens(), "temperature", 0.4,
                 "repeat_penalty", properties.repeatPenalty()));
-        if (model.startsWith("qwen3")) {
-            body.put("think", false);  // qwen3의 '생각하기'를 끄고 바로 답하게 한다 (시험 단계와 같은 설정)
+        if (model.startsWith("qwen3") || model.startsWith("gemma4")) {
+            // '생각하기'를 끄고 바로 답하게 한다 (시험 단계와 같은 설정). gemma4도 그냥 두면 생각하기가 켜져 출력이 10배 가까이 길어진다
+            body.put("think", false);
         }
 
         long started = System.nanoTime();
