@@ -68,4 +68,20 @@ class TextRulesTest {
         assertThat(TextRules.unknownEnglishWords("'Cross-Attention Based Conditioning' 문구와 LDM", paper)).isEmpty();
         assertThat(TextRules.unknownEnglishWords("LDMs와 latent spaces", paper)).as("복수형은 같은 낱말").isEmpty();
     }
+
+    @Test
+    void 표_그림_제목만_골라내고_표를_인용하는_본문_문장은_남긴다() {
+        assertThat(TextRules.isCaption("Comparison of a class-conditional ImageNet LDM with recent state-of-the-art methods [12].")).isTrue();
+        assertThat(TextRules.isCaption("Table 2. Evaluation of text-conditional image synthesis on the 256 × 256-sized MS-COCO dataset")).isTrue();
+        assertThat(TextRules.isCaption("Tab. 2. We note that applying classifier-free diffusion guidance greatly boosts sample quality")).isFalse();
+        assertThat(TextRules.isCaption("Tab. 8 shows hyperparameters and reconstruction performance of the first stage models")).isFalse();
+        assertThat(TextRules.isCaption("Fig. 6 shows sample quality as a function of training progress")).isFalse();
+    }
+
+    @Test
+    void 사실_끝의_괄호_근거_번호를_찾아_지운다() {
+        assertThat(TextRules.hasCitation("잠재 확산 모델은 샘플링 속도가 느리다(239).")).isTrue();
+        assertThat(TextRules.removeCitations("잠재 확산 모델은 샘플링 속도가 느리다(239, 240).")).isEqualTo("잠재 확산 모델은 샘플링 속도가 느리다.");
+        assertThat(TextRules.removeCitations("FID가 1.6배(1.6x) 개선됐다 (239번)")).isEqualTo("FID가 1.6배(1.6x) 개선됐다");
+    }
 }

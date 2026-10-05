@@ -33,6 +33,8 @@ final class PaperFixture {
             for (int i = 0; i < (int) section[1]; i++, number++) {
                 String text = number % 25 == 0
                         ? "256 × 256 4.2 ↓ 3.1"  // 가끔 표 조각을 섞는다
+                        : number == 181
+                        ? "Comparison of a class-conditional ImageNet LDM with recent state-of-the-art methods."
                         : number == 239
                         ? "LDMs reduce computational requirements, but their sequential sampling is still slower than that of GANs."
                         : "Sentence " + number + " explains an important finding of the paper.";

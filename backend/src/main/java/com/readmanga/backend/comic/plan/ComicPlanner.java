@@ -53,6 +53,12 @@ public class ComicPlanner {
     record FactsAnswer(List<FactItem> facts) {
     }
 
+    record VerifyAnswer(List<VerifyItem> results) {
+    }
+
+    record VerifyItem(int fact, String verdict, String reason) {
+    }
+
     record FactItem(String fact, List<Integer> evidence) {
     }
 
@@ -123,12 +129,17 @@ public class ComicPlanner {
                 boolean closing = chunk.sections().stream().anyMatch(TextRules::isClosingSection);
                 int count = closing ? CLOSING_SECTION_FACTS : FACTS_PER_CHUNK;
 
-                AiAsker.Answer<FactsAnswer> answer = pickFacts(chunk, title, count, closing, byNumber, paperWords);
+                Map<String, String> unsupported = new HashMap<>();  // 사실 확인에서 근거가 없다고 나온 사실 → 이유
+                AiAsker.Answer<FactsAnswer> answer = pickFacts(chunk, title, count, closing, byNumber, paperWords, unsupported);
                 answer.attempts().forEach(attempt -> servers.add(attempt.server()));
                 listener.update(++doneSteps, totalSteps);
                 List<String> droppedHere = new ArrayList<>();
                 for (FactItem item : answer.value().facts()) {
-                    ComicPlan.FactPlan fact = filterFact(item, chunk, title, byNumber, usedEvidence, acceptedFacts, paperWords);
+                    ComicPlan.FactPlan fact = unsupported.containsKey(item.fact()) ? null
+                            : filterFact(item, chunk, title, byNumber, usedEvidence, acceptedFacts, paperWords);
+                    if (unsupported.containsKey(item.fact())) {
+                        log.info("근거 없는 사실을 버렸습니다: {} ({})", item.fact(), unsupported.get(item.fact()));
+                    }
                     if (fact == null) {
                         droppedHere.add(item.fact());
                     } else {
@@ -176,13 +187,14 @@ public class ComicPlanner {
     // ---------- ④ 핵심 사실 추출 ----------
 
     private AiAsker.Answer<FactsAnswer> pickFacts(Chunk chunk, TitleItem title, int count, boolean closing,
-                                                  Map<Integer, PaperSentence> byNumber, Set<String> paperWords) {
+                                                  Map<Integer, PaperSentence> byNumber, Set<String> paperWords,
+                                                  Map<String, String> unsupported) {
         List<Integer> candidates = new ArrayList<>();
         StringBuilder lines = new StringBuilder();
         for (int number = chunk.start(); number <= chunk.end(); number++) {
             PaperSentence sentence = byNumber.get(number);
-            if (TextRules.isTableFragment(sentence.getText())) {
-                continue;  // 표 조각 문장은 AI에게 보여 주지 않는다
+            if (TextRules.isTableFragment(sentence.getText()) || TextRules.isCaption(sentence.getText())) {
+                continue;  // 표 조각과 표·그림 제목은 AI에게 보여 주지 않는다 (제목만 보고 결과를 지어냈다)
             }
             candidates.add(number);
             lines.append("[%d] (p.%s) %s%n".formatted(number, sentence.getPage(), sentence.getText()));
@@ -191,11 +203,67 @@ public class ComicPlanner {
         Map<String, Object> schema = JsonSchemas.object("facts", JsonSchemas.array(
                 JsonSchemas.object("fact", JsonSchemas.string(), "evidence", JsonSchemas.array(JsonSchemas.integer(), 1, 3)),
                 count, count));
-        Function<FactsAnswer, List<String>> check = answer -> checkFacts(answer, allowed, paperWords);
+        Function<FactsAnswer, List<String>> check = answer -> {
+            List<String> problems = new ArrayList<>(checkFacts(answer, allowed, paperWords));
+            problems.addAll(verifyFacts(answer, allowed, byNumber, unsupported));
+            return problems;
+        };
         return aiAsker.ask(properties.factModel(), PlanPrompts.FACT_SYSTEM,
                 PlanPrompts.FACTS.formatted(title.title(), title.summary(), String.join(", ", chunk.sections()), count,
                         closing ? "\n" + PlanPrompts.LIMITATION_RULE : "", lines.toString().trim()),
                 schema, FactsAnswer.class, check, MAX_RETRIES);
+    }
+
+    /**
+     * 사실 확인: 고른 사실을 근거 문장과 다시 대조한다(AI 요청 1번). '틀림'으로 나온 사실은 다시 쓰게 하고,
+     * unsupported에 적어 두어 다시 써도 남으면 버린다. 확인 자체가 깨지면(답이 모두 잘림 등) 작업을 멈추지 않고 건너뛴다.
+     */
+    private List<String> verifyFacts(FactsAnswer answer, Set<Integer> allowed, Map<Integer, PaperSentence> byNumber,
+                                     Map<String, String> unsupported) {
+        List<FactItem> facts = answer.facts();
+        if (facts.isEmpty()) {
+            return List.of();
+        }
+        StringBuilder sentences = new StringBuilder();
+        StringBuilder claims = new StringBuilder();
+        Set<Integer> shown = new java.util.TreeSet<>();
+        for (int index = 0; index < facts.size(); index++) {
+            FactItem fact = facts.get(index);
+            List<Integer> evidence = fact.evidence().stream().filter(allowed::contains).toList();
+            shown.addAll(evidence);
+            claims.append("[사실 %d] %s (근거: %s)%n".formatted(index + 1, fact.fact(),
+                    evidence.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(", "))));
+        }
+        shown.forEach(number -> sentences.append("[%d] (%s) %s%n".formatted(number, byNumber.get(number).getSectionTitle(),
+                byNumber.get(number).getText())));
+        Map<String, Object> schema = JsonSchemas.object("results", JsonSchemas.array(
+                JsonSchemas.object("fact", JsonSchemas.integer(), "verdict", JsonSchemas.stringEnum(PlanPrompts.VERDICTS),
+                        "reason", JsonSchemas.string()),
+                facts.size(), facts.size()));
+        AiAsker.Answer<VerifyAnswer> verdict;
+        try {
+            verdict = aiAsker.ask(properties.factModel(), PlanPrompts.VERIFY_SYSTEM,
+                    PlanPrompts.VERIFY.formatted(sentences.toString().trim(), claims.toString().trim()), schema, VerifyAnswer.class,
+                    value -> value.results().size() == facts.size() ? List.of()
+                            : List.of("results에 사실 %d개를 모두 순서대로 넣는다.".formatted(facts.size())), 0);
+        } catch (IllegalStateException e) {
+            log.warn("사실 확인을 건너뜁니다: {}", e.getMessage());
+            return List.of();
+        }
+        List<String> problems = new ArrayList<>();
+        List<VerifyItem> results = verdict.value().results();
+        for (int index = 0; index < Math.min(facts.size(), results.size()); index++) {
+            String fact = facts.get(index).fact();
+            VerifyItem result = results.get(index);
+            if (!"틀림".equals(result.verdict())) {  // 맞음·과장은 그대로 둔다 (과장까지 막으면 맞는 사실이 너무 많이 버려진다)
+                unsupported.remove(fact);
+                continue;
+            }
+            unsupported.put(fact, result.reason());
+            problems.add("%d번 사실은 근거 문장에 없는 내용을 담고 있다: %s. 근거 문장에 적힌 내용만 쓴다."
+                    .formatted(index + 1, result.reason()));
+        }
+        return problems;
     }
 
     private static List<String> checkFacts(FactsAnswer answer, Set<Integer> allowed, Set<String> paperWords) {
@@ -238,6 +306,7 @@ public class ComicPlanner {
         List<Integer> evidence = item.evidence().stream().distinct()
                 .filter(number -> number >= chunk.start() && number <= chunk.end())
                 .filter(number -> !TextRules.isTableFragment(byNumber.get(number).getText()))
+                .filter(number -> !TextRules.isCaption(byNumber.get(number).getText()))
                 .toList();
         if (evidence.isEmpty() || TextRules.hasMixedScript(text) || TextRules.hasFormula(text)
                 || !TextRules.unknownEnglishWords(text, paperWords).isEmpty()) {

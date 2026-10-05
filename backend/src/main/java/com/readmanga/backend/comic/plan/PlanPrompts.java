@@ -1,5 +1,7 @@
 package com.readmanga.backend.comic.plan;
 
+import java.util.List;
+
 /** 만화 제목, 조각 제목, 핵심 사실 추출에 쓰는 지시문. 시험 단계(run_story_spike.py, 7차 이후 수정본)의 지시문을 옮겼다. */
 final class PlanPrompts {
 
@@ -15,6 +17,45 @@ final class PlanPrompts {
      */
     static final String TERM_RULE = "기술 용어는 한국어로 쓰고 바로 뒤 괄호에 논문의 영어 원문을 붙인다"
             + "(예: 잠재 공간(latent space), 컨볼루션 샘플링(convolutional sampling)). 논문에 없는 영어 용어는 만들지 않는다.";
+
+    static final String VERIFY_SYSTEM = "너는 학습 만화의 사실 확인 담당이다. 한국어로 쓴 사실이 영어 논문 원문과 어긋나는지 확인한다. "
+            + "쉬운 말로 풀어 쓴 것은 문제 삼지 않고, 원문과 어긋나는 내용만 잡아낸다.";
+
+    /**
+     * 사실 확인. 사실 고르기가 원문에 없는 결과·비교를 지어내는 일이 반복돼(4차 실행 25개 중 5개) 한 번 더 대조한다.
+     * 맞음/과장/틀림 세 단계로 받고 '틀림'만 다시 쓰게 한다. 참·거짓 두 단계로 물었더니 맞는 사실까지 15개를 거부했다.
+     * 예시는 실제로 틀렸던 사례로 만들었다. %1$s 원문 문장들(섹션 이름 포함), %2$s 확인할 사실들
+     */
+    static final String VERIFY = """
+            아래 논문 원문 문장(영어, 괄호 안은 섹션 이름)과, 그 문장을 근거로 쓴 한국어 사실을 비교해 판정하라.
+
+            판정:
+            - 맞음: 원문 내용을 풀어 쓰거나, 요약하거나, 일부만 옮겼다. 섹션 이름에 나온 주제를 쓴 것도 맞음이다.
+            - 과장: 방향은 원문과 같지만 표현이 조금 세다(예: '할 수 있다'를 '해야 한다'로).
+            - 틀림: 다음 중 하나라도 해당한다.
+              1) 원문에 없는 실험 결과나 숫자를 지어냈다.
+              2) 비교 대상(무엇보다 낫다/빠르다)이 원문과 다르거나, 원문에 없는 비교를 덧붙였다.
+              3) 원문은 다른 연구들의 이야기인데 '이 연구'가 했다고 썼다.
+              4) 원문과 반대되는 내용이다.
+
+            예시:
+            - 원문 "we conduct a user study comparing the pixel-baseline with LDM-SR" / 사실 "사용자 조사에서 LDM-SR이 더 선호되었다" → 틀림 (조사 결과는 원문에 없다)
+            - 원문 "a speed-up of at least 2.7x between pixel- and latent-based diffusion models" / 사실 "잠재 확산 모델은 기존 LaMa보다 빠르다" → 틀림 (비교 대상이 다르다)
+            - 원문 "DMs have achieved state-of-the-art results in density estimation" / 사실 "확산 모델은 밀도 추정에서 GAN보다 우수하다" → 틀림 (GAN과의 비교는 원문에 없다)
+            - 원문 "optimization of powerful DMs often consumes hundreds of GPU days" / 사실 "기존 확산 모델은 매우 많은 계산 자원이 필요하다" → 맞음 (풀어 쓴 것)
+            - 원문 (Transformer Encoders for LDMs) "we open them up for various conditioning modalities" / 사실 "트랜스포머 인코더를 도입해 텍스트로 이미지를 만들 수 있게 했다" → 맞음 (섹션 주제)
+
+            원문 문장:
+            %1$s
+
+            확인할 사실:
+            %2$s
+
+            results에는 사실마다 하나씩 순서대로 넣는다. fact는 사실 번호, verdict는 판정, \
+            reason은 틀림일 때 원문과 어긋나는 부분을 한국어 한 문장으로(아니면 빈 글자).
+            """;
+
+    static final List<String> VERDICTS = List.of("맞음", "과장", "틀림");
 
     static final String OUTLINE_SYSTEM = "너는 연구 논문을 Why책 같은 학습 만화로 만드는 편집자다.";
 

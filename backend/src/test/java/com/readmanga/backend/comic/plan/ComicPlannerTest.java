@@ -46,10 +46,24 @@ class ComicPlannerTest {
                 Matcher matcher = CHUNK_SECTIONS.matcher(prompt);
                 String sections = matcher.find() ? matcher.group(1) : "?";
                 content = "{\"title\":\"%s\",\"summary\":\"요약\"}".formatted(sections.replace("\"", ""));
+            } else if (properties.containsKey("results")) {
+                content = verify(prompt);
             } else {
                 content = facts(prompt, retry);
             }
             return new ChatResult(content, OllamaServer.PRIMARY, 100, 50, 10);
+        }
+
+        /** 사실 확인: '선호도가 높았다'(원문에 없는 결과)가 든 사실만 근거 없음으로 판정한다 */
+        private static String verify(String prompt) {
+            List<String> items = new ArrayList<>();
+            Matcher matcher = Pattern.compile("\\[사실 (\\d+)] (.+)").matcher(prompt);
+            while (matcher.find()) {
+                boolean fabricated = matcher.group(2).contains("선호도가 높았다");
+                items.add("{\"fact\":%s,\"verdict\":\"%s\",\"reason\":\"%s\"}".formatted(matcher.group(1), fabricated ? "틀림" : "맞음",
+                        fabricated ? "원문은 사용자 조사를 했다는 것까지만 말한다" : ""));
+            }
+            return "{\"results\":[" + String.join(",", items) + "]}";
         }
 
         private static String facts(String prompt, boolean retry) {
@@ -73,6 +87,13 @@ class ComicPlannerTest {
                         {"facts":[
                           {"fact":"확산 모델은 이미지 생성에서 최고 수준의 결과를 낸다 [11].","evidence":[1]},
                           {"fact":"기존 확산 모델은 계산 비용이 매우 크다.","evidence":[3, 999]}]}""";
+            }
+            if ((first == 64 && !retry) || first == 92) {
+                // 64 조각은 첫 시도에만, 92 조각은 다시 써도 원문에 없는 결과를 지어낸다 (4차 실행 207번)
+                return """
+                        {"facts":[
+                          {"fact":"사용자 조사에서 이 연구의 결과가 선호도가 높았다.","evidence":[%1$d]},
+                          {"fact":"문장 %1$d번은 이 조각의 첫 번째 발견을 설명한다.","evidence":[%2$d]}]}""".formatted(first, numbers.getLast());
             }
             if (first == 49 && !retry) {
                 // 셋째 조각 첫 시도: 논문에 없는 영어 용어를 지어냄 (3차 실행의 '커널 필터링')
@@ -200,5 +221,27 @@ class ComicPlannerTest {
         assertThat(plan.pages().getFirst().facts()).extracting(ComicPlan.FactPlan::fact).noneMatch(fact -> fact.contains("kernel"));
         assertThat(ai.promptsOf("이 부분에 맞는 소제목")).allMatch(prompt -> prompt.contains("괄호에 논문의 영어 원문"));
         assertThat(ai.promptsOf("핵심 사실")).allMatch(prompt -> prompt.contains("괄호에 논문의 영어 원문"));
+    }
+
+    @Test
+    void 근거_문장에_없는_결과를_지어낸_사실은_다시_쓰게_하고_끝까지_남으면_버린다() {
+        FakeAi ai = new FakeAi();
+        ComicPlan plan = planner(ai).plan("Latent Diffusion", PaperFixture.sentences());
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
+                .anyMatch(content -> content.contains("1번 사실은 근거 문장에 없는 내용을 담고 있다: 원문은 사용자 조사를 했다는 것까지만 말한다"));
+        List<String> allFacts = plan.pages().stream().flatMap(page -> page.facts().stream()).map(ComicPlan.FactPlan::fact).toList();
+        assertThat(allFacts).as("다시 써서 고쳐졌거나(64 조각) 끝까지 남아 버려졌다(92 조각)").noneMatch(fact -> fact.contains("선호도"));
+        assertThat(plan.pages().stream().flatMap(page -> page.chunks().stream()).flatMap(chunk -> chunk.droppedFacts().stream()))
+                .contains("사용자 조사에서 이 연구의 결과가 선호도가 높았다.");
+    }
+
+    @Test
+    void 표_그림_제목은_근거_후보로_보여_주지_않는다() {
+        FakeAi ai = new FakeAi();
+        planner(ai).plan("Latent Diffusion", PaperFixture.sentences());
+
+        assertThat(ai.promptsOf("핵심 사실")).filteredOn(prompt -> prompt.contains("[180]"))
+                .singleElement().asString().doesNotContain("[181]");
     }
 }

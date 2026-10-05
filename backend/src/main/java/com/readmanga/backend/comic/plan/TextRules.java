@@ -26,6 +26,15 @@ public final class TextRules {
 
     /** 사실 문장에 남은 [11], [62, 63] 같은 번호. */
     private static final Pattern CITATION = Pattern.compile("\\s*\\[\\d+(\\s*,\\s*\\d+)*]");
+    /** 사실 끝에 붙인 근거 번호: "(239)", "(239, 240)", "(239번)" (4차 실행) */
+    private static final Pattern PAREN_NUMBER = Pattern.compile("\\s*\\(\\s*\\d+(\\s*,\\s*\\d+)*\\s*번?\\s*\\)");
+    /**
+     * 표·그림 제목: "Table 2. Evaluation of …", "Comparison of a class-conditional ImageNet LDM with …".
+     * 제목에는 결과가 없는데, 사실 고르기가 제목만 보고 실험 결과를 지어냈다(1차·4차 실행 181번).
+     * 'Tab. 8 shows …'처럼 표를 인용하는 본문 문장은 제목이 아니다 (실제 논문 383문장으로 오탐 0 확인).
+     */
+    private static final Pattern CAPTION = Pattern.compile(
+            "^(Table|Figure)\\s+\\d+\\.\\s+\\S|^(Comparison|Evaluation|Samples|Overview|Illustration|Visualization|Qualitative|Quantitative|Ablation)\\s+(of|on|for|from)\\b");
 
     /** 표 조각에 많은 숫자·기호만으로 된 낱말. */
     private static final Pattern NUMERIC_TOKEN = Pattern.compile("^[\\d.,±×%()\\[\\]\\-–—↑↓/:;]+$");
@@ -101,12 +110,16 @@ public final class TextRules {
     }
 
     public static String removeCitations(String text) {
-        return CITATION.matcher(text).replaceAll("").trim();
+        return PAREN_NUMBER.matcher(CITATION.matcher(text).replaceAll("")).replaceAll("").trim();
+    }
+
+    public static boolean isCaption(String sentence) {
+        return sentence != null && CAPTION.matcher(sentence.strip()).find();
     }
 
     /** '[88]의 모델'처럼 인용 번호가 남아 있는지. 지우기만 하면 '모델이의 모델'처럼 문법이 깨져서(2차 실행), 먼저 다시 쓰게 한다. */
     public static boolean hasCitation(String text) {
-        return text != null && CITATION.matcher(text).find();
+        return text != null && (CITATION.matcher(text).find() || PAREN_NUMBER.matcher(text).find());
     }
 
     /** 글자 두 개씩 묶은 조각이 얼마나 겹치는지(0~1). 비슷한 사실을 거르는 데 쓴다. */
