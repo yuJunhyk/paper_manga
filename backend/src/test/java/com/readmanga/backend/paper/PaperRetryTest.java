@@ -1,5 +1,7 @@
 package com.readmanga.backend.paper;
 
+import org.springframework.context.annotation.Import;
+import com.readmanga.backend.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,6 +21,7 @@ import static org.mockito.Mockito.verify;
  * 실제 AI를 부르지 않도록 비동기 처리기는 가짜(mock)로 바꾼다.
  */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)  // 실제 DB 대신 일회용 테스트 DB
 @Transactional
 class PaperRetryTest {
 

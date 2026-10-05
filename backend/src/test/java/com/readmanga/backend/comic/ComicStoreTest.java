@@ -1,5 +1,7 @@
 package com.readmanga.backend.comic;
 
+import org.springframework.context.annotation.Import;
+import com.readmanga.backend.TestcontainersConfiguration;
 import com.readmanga.backend.comic.write.LineRules;
 import com.readmanga.backend.comic.write.WrittenComic;
 import com.readmanga.backend.paper.JobStage;
@@ -20,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** 대본을 만화 테이블에 저장하고 작업을 완료로 표시하는지 실제 DB로 확인한다. 끝나면 되돌린다(롤백). */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)  // 실제 DB 대신 일회용 테스트 DB
 @Transactional
 class ComicStoreTest {
 

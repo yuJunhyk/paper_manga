@@ -1,5 +1,7 @@
 package com.readmanga.backend.paper;
 
+import org.springframework.context.annotation.Import;
+import com.readmanga.backend.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -9,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /** 서버가 시작될 때 전 서버가 남긴 '대기·처리 중' 작업을 실패로 표시하는지 실제 DB로 확인한다. 끝나면 되돌린다(롤백). */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)  // 실제 DB 대신 일회용 테스트 DB
 @Transactional
 class StaleJobCleanerTest {
 

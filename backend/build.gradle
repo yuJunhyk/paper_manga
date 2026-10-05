@@ -22,13 +22,21 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
 	runtimeOnly 'org.postgresql:postgresql'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+	// 테스트마다 일회용 PostgreSQL 컨테이너를 띄워 실제 DB와 분리한다 (버전은 Spring Boot가 관리)
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-postgresql'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
 	useJUnitPlatform()
-	// 테스트는 개발 서버와 같은 DB를 쓴다: 시작할 때 '처리 중' 작업을 정리하면 실행 중인 서버의 작업을 실패로 바꾸므로 끈다
-	systemProperty 'readmanga.clean-stale-jobs-on-startup', 'false'
+	// 테스트는 일회용 DB(Testcontainers)를 쓰므로 .env의 실제 값이 필요 없고, 실제 AI 서버를 부르지도 않게 한다
+	systemProperty 'DB_PASSWORD', 'not-used-in-tests'
+	systemProperty 'OLLAMA_PRIMARY_URL', 'http://127.0.0.1:1'
+	// Testcontainers의 청소부 컨테이너(Ryuk)는 포트를 모든 네트워크(0.0.0.0)에 열어서 이 프로젝트 테스트에서는 끈다.
+	// 테스트가 정상적으로 끝나면 Spring이 테스트 DB를 지운다. 테스트를 강제 종료했다면 남은 컨테이너를 docker rm -f로 지운다
+	environment 'TESTCONTAINERS_RYUK_DISABLED', 'true'
 	// 테스트 로그는 서버 로그(logs/backend.log)와 섞이지 않게 따로 둔다
 	systemProperty 'logging.file.name', 'build/test-logs/test.log'
 }

@@ -1,5 +1,7 @@
 package com.readmanga.backend.paper;
 
+import org.springframework.context.annotation.Import;
+import com.readmanga.backend.TestcontainersConfiguration;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -12,6 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** 작업 취소(협력적 중단)를 실제 DB로 확인한다. 끝나면 되돌린다(롤백). */
 @SpringBootTest
+@Import(TestcontainersConfiguration.class)  // 실제 DB 대신 일회용 테스트 DB
 @Transactional
 class PaperCancelTest {
 
