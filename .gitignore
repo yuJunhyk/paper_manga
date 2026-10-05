@@ -12,3 +12,6 @@ __pycache__/
 spikes/pdfbox-spike/*.txt
 spikes/grobid-spike/*.xml
 results/*grobid-api*
+
+# 서버 로그 파일
+logs/

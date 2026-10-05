@@ -73,6 +73,7 @@ public class ComicPlanner {
         Set<String> servers = new LinkedHashSet<>();
         int totalSteps = 1 + chunks.size() * 2;
         int doneSteps = 0;
+        listener.update(0, totalSteps);  // 시작하자마자 0/전체를 보여 준다 (0/0이면 멈춤과 대기를 구분할 수 없다)
 
         // ③ 만화 제목과 조각 제목 (조각 제목은 조각마다 따로 묻는다. 한 번에 쓰게 했더니 한 칸씩 밀렸다)
         long started = System.currentTimeMillis();

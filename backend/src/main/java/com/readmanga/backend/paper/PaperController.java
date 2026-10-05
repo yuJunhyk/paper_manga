@@ -29,6 +29,18 @@ public class PaperController {
         return paperService.getJob(id);
     }
 
+    /** 작업 취소. 지금 하던 AI 요청이 끝나는 대로 멈춘다. */
+    @PostMapping("/{id}/cancel")
+    public JobResponse cancel(@PathVariable("id") Long id) {
+        return paperService.cancel(id);
+    }
+
+    /** 다시 시도: 실패·취소된 작업을 저장된 문장으로 핵심 사실 추출부터 다시 돌린다. 접수되면 202. */
+    @PostMapping("/{id}/retry")
+    public ResponseEntity<JobResponse> retry(@PathVariable("id") Long id) {
+        return ResponseEntity.accepted().body(paperService.retry(id));
+    }
+
     @GetMapping("/{id}/result")
     public PaperStructure getResult(@PathVariable("id") Long id) {
         return paperService.getResult(id);

@@ -96,7 +96,7 @@ class ComicPlannerTest {
 
     private static ComicPlanner planner(FakeAi ai) {
         OllamaProperties properties = new OllamaProperties("http://desktop", "http://macbook", Duration.ofSeconds(2),
-                Duration.ofMinutes(10), 16384, "qwen3:8b", "exaone3.5:7.8b");
+                Duration.ofMinutes(10), Duration.ofMinutes(10), Duration.ofMinutes(5), Duration.ofSeconds(10), Duration.ZERO, 16384, 8192, 1500, 1.1, "qwen3:8b", "exaone3.5:7.8b");
         return new ComicPlanner(new AiAsker(ai, JsonMapper.builder().build()), properties);
     }
 

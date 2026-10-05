@@ -8,6 +8,12 @@ package com.readmanga.backend.ai;
  * @param promptTokens AI가 읽은 토큰 수
  * @param outputTokens AI가 쓴 토큰 수
  * @param millis       걸린 시간(밀리초)
+ * @param truncated    출력 길이 상한에 걸려 답이 중간에 잘렸는지 (같은 말을 반복하는 고리에 빠졌을 때 주로 생긴다)
  */
-public record ChatResult(String content, OllamaServer server, Integer promptTokens, Integer outputTokens, long millis) {
+public record ChatResult(String content, OllamaServer server, Integer promptTokens, Integer outputTokens, long millis,
+                         boolean truncated) {
+
+    public ChatResult(String content, OllamaServer server, Integer promptTokens, Integer outputTokens, long millis) {
+        this(content, server, promptTokens, outputTokens, millis, false);
+    }
 }

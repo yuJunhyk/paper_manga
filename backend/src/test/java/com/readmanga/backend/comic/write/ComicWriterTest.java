@@ -107,7 +107,7 @@ class ComicWriterTest {
 
     private static ComicWriter writer(FakeAi ai) {
         OllamaProperties properties = new OllamaProperties("http://desktop", "http://macbook", Duration.ofSeconds(2),
-                Duration.ofMinutes(10), 16384, "qwen3:8b", "exaone3.5:7.8b");
+                Duration.ofMinutes(10), Duration.ofMinutes(10), Duration.ofMinutes(5), Duration.ofSeconds(10), Duration.ZERO, 16384, 8192, 1500, 1.1, "qwen3:8b", "exaone3.5:7.8b");
         return new ComicWriter(new AiAsker(ai, JsonMapper.builder().build()), properties);
     }
 
@@ -188,11 +188,11 @@ class ComicWriterTest {
     }
 
     @Test
-    void 진행률은_이야기_1번_사실_컷_8번_연출_4번으로_모두_13단계다() {
+    void 진행률은_시작_때_0을_알리고_이야기_1번_사실_컷_8번_연출_4번으로_모두_13단계다() {
         List<String> progress = new ArrayList<>();
         writer(new FakeAi()).write(plan(), sentences(), (done, total) -> progress.add(done + "/" + total));
 
-        assertThat(progress).hasSize(13).first().isEqualTo("1/13");
+        assertThat(progress).hasSize(14).first().isEqualTo("0/13");
         assertThat(progress).last().isEqualTo("13/13");
     }
 }

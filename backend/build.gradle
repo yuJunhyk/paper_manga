@@ -27,4 +27,8 @@ dependencies {
 
 tasks.named('test') {
 	useJUnitPlatform()
+	// 테스트는 개발 서버와 같은 DB를 쓴다: 시작할 때 '처리 중' 작업을 정리하면 실행 중인 서버의 작업을 실패로 바꾸므로 끈다
+	systemProperty 'readmanga.clean-stale-jobs-on-startup', 'false'
+	// 테스트 로그는 서버 로그(logs/backend.log)와 섞이지 않게 따로 둔다
+	systemProperty 'logging.file.name', 'build/test-logs/test.log'
 }

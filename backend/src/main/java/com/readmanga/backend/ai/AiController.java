@@ -1,6 +1,7 @@
 package com.readmanga.backend.ai;
 
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +32,14 @@ public class AiController {
     @GetMapping("/status")
     public StatusResponse status() {
         List<ServerStatus> servers = Arrays.stream(OllamaServer.values()).map(ollamaClient::status).toList();
+        String active = servers.stream().filter(ServerStatus::available).map(ServerStatus::label).findFirst().orElse("없음");
+        return new StatusResponse(active, servers);
+    }
+
+    /** 재연결: 실패해서 건너뛰던 서버를 바로 다시 쓰게 한다. 멎은 서버를 고친 뒤 건너뛰는 시간이 끝나길 기다리지 않아도 된다. */
+    @PostMapping("/reset")
+    public StatusResponse reset() {
+        List<ServerStatus> servers = ollamaClient.reset();
         String active = servers.stream().filter(ServerStatus::available).map(ServerStatus::label).findFirst().orElse("없음");
         return new StatusResponse(active, servers);
     }

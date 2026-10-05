@@ -68,6 +68,7 @@ public class ComicWriter {
         Set<String> servers = new LinkedHashSet<>();
         int totalSteps = 1 + plan.pages().stream().mapToInt(page -> page.facts().size() + 1).sum();
         int doneSteps = 0;
+        listener.update(0, totalSteps);  // 시작하자마자 0/전체를 보여 준다 (0/0이면 멈춤과 대기를 구분할 수 없다)
         String model = properties.dialogueModel();
 
         // ① 이야기 뼈대
