@@ -50,7 +50,7 @@ public class PaperJobProcessor {
         this.comicStore = comicStore;
     }
 
-    @Async
+    @Async("jobExecutor")  // 논문 처리 전용 실행기(AsyncConfig): 한 번에 하나, 나머지는 대기 줄
     public void process(Long jobId, byte[] pdf, String fileName) {
         log.info("작업 {} 처리 시작: {}", jobId, fileName);
         runSafely(jobId, () -> {
@@ -71,7 +71,7 @@ public class PaperJobProcessor {
      * 다시 시도: 실패·취소된 작업을 DB에 저장된 문장으로 핵심 사실 추출부터 다시 돌린다.
      * PDF는 저장하지 않으므로 논문 분석(GROBID)은 다시 하지 않는다.
      */
-    @Async
+    @Async("jobExecutor")  // 논문 처리 전용 실행기(AsyncConfig): 한 번에 하나, 나머지는 대기 줄
     public void retry(Long jobId) {
         log.info("작업 {} 다시 시도: 저장된 문장으로 핵심 사실 추출부터", jobId);
         runSafely(jobId, () -> {

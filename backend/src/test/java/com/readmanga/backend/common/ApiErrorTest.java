@@ -90,7 +90,7 @@ class ApiErrorTest {
 
     @Test
     void PDF는_받아서_작업을_만들고_202를_돌려준다() {
-        given(paperService.upload(any())).willReturn(new JobResponse(7L, "paper.pdf", null, JobStatus.PENDING, null, 0, 0, null, null, null));
+        given(paperService.upload(any())).willReturn(new JobResponse(7L, "paper.pdf", null, JobStatus.PENDING, null, 0, 0, null, 1, null, null));
         MockMultipartFile pdf = new MockMultipartFile("file", "paper.pdf", "application/pdf", "%PDF-1.7 ...".getBytes(StandardCharsets.US_ASCII));
 
         assertThat(mvc.post().uri("/api/papers").multipart().file(pdf)).hasStatus(HttpStatus.ACCEPTED)

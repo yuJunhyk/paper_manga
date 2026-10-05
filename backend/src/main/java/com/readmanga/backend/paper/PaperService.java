@@ -1,5 +1,7 @@
 package com.readmanga.backend.paper;
 
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.task.TaskRejectedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,20 +20,30 @@ public class PaperService {
     private final PaperJobRepository paperJobRepository;
     private final PaperSentenceRepository paperSentenceRepository;
     private final PaperJobProcessor paperJobProcessor;
+    private final int queueCapacity;
 
     public PaperService(PaperJobRepository paperJobRepository, PaperSentenceRepository paperSentenceRepository,
-                        PaperJobProcessor paperJobProcessor) {
+                        PaperJobProcessor paperJobProcessor, @Value("${readmanga.jobs.queue-capacity}") int queueCapacity) {
         this.paperJobRepository = paperJobRepository;
         this.paperSentenceRepository = paperSentenceRepository;
         this.paperJobProcessor = paperJobProcessor;
+        this.queueCapacity = queueCapacity;
     }
 
+    /**
+     * 업로드: 대기 줄에 자리가 있을 때만 작업을 만들고 줄 세운다. 자리가 없으면 작업을 만들지 않고 429.
+     * 그 사이 다른 업로드가 먼저 자리를 차지해 실행기가 거절하면, 만든 작업은 실패로 남기고 429.
+     */
     public JobResponse upload(MultipartFile file) {
         byte[] pdf = readBytes(file);
+        requireQueueRoom();
         PaperJob job = paperJobRepository.save(new PaperJob(file.getOriginalFilename()));
-
-        paperJobProcessor.process(job.getId(), pdf, file.getOriginalFilename());
-        return JobResponse.from(job);
+        try {
+            paperJobProcessor.process(job.getId(), pdf, file.getOriginalFilename());
+        } catch (TaskRejectedException e) {
+            rejectQueued(job.getId());
+        }
+        return JobResponse.from(job, queuePosition(job));
     }
 
     /**
@@ -59,17 +71,53 @@ public class PaperService {
         if (!paperSentenceRepository.existsByJob_Id(id)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "논문 분석 전에 멈춘 작업이라 저장된 문장이 없습니다. PDF를 다시 올려 주세요.");
         }
+        requireQueueRoom();
         int changed = paperJobRepository.resetForRetry(id, JobStatus.PENDING, JobStage.PLANNING,
                 List.of(JobStatus.FAILED, JobStatus.CANCELLED), LocalDateTime.now());
         if (changed == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "실패했거나 취소된 작업만 다시 시도할 수 있습니다. 상태: " + job.getStatus());
         }
-        paperJobProcessor.retry(id);
-        return JobResponse.from(findJob(id));
+        try {
+            paperJobProcessor.retry(id);
+        } catch (TaskRejectedException e) {
+            rejectQueued(id);
+        }
+        return withQueuePosition(findJob(id));
     }
 
     public JobResponse getJob(Long id) {
-        return JobResponse.from(findJob(id));
+        return withQueuePosition(findJob(id));
+    }
+
+    // ---------- 대기 줄 ----------
+
+    private static final String QUEUE_FULL = "지금 대기 중인 작업이 많습니다(최대 %d개). 앞 작업이 끝난 뒤 다시 올려 주세요.";
+
+    /** 대기 줄이 꽉 찼으면 작업을 만들기 전에 429로 돌려보낸다 (거절된 작업 기록이 쌓이지 않게) */
+    private void requireQueueRoom() {
+        if (paperJobRepository.countByStatus(JobStatus.PENDING) >= queueCapacity) {
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, QUEUE_FULL.formatted(queueCapacity));
+        }
+    }
+
+    /** 실행기가 줄 세우기를 거절함: 만든 작업은 이유를 적어 실패로 남기고(기록 보존) 429 */
+    private void rejectQueued(Long jobId) {
+        PaperJob job = findJob(jobId);
+        job.fail("대기 줄이 꽉 차서 접수하지 못했습니다. PDF를 다시 올려 주세요.");
+        paperJobRepository.save(job);
+        throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, QUEUE_FULL.formatted(queueCapacity));
+    }
+
+    private JobResponse withQueuePosition(PaperJob job) {
+        return JobResponse.from(job, queuePosition(job));
+    }
+
+    /** 지금 순번: 나보다 먼저 줄 선 대기 작업 수 + 1. 대기가 아니면 null */
+    private Integer queuePosition(PaperJob job) {
+        if (job.getStatus() != JobStatus.PENDING) {
+            return null;
+        }
+        return (int) paperJobRepository.countAhead(JobStatus.PENDING, job.getUpdatedAt(), job.getId()) + 1;
     }
 
     /** DB의 문장들을 번호 순서대로 읽어 섹션별로 다시 묶는다. */
