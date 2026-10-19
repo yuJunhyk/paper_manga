@@ -41,6 +41,7 @@ public final class LineRules {
     private static final Pattern LEADING_BULLET = Pattern.compile("^[-–—•·]+\\s*");
     private static final Pattern TRAILING_COMMA = Pattern.compile("\\s*[,，]+$");
     private static final double SIMILAR_SCENE = 0.5;  // 바로 앞 컷 장면과 이만큼 비슷하면 다시 쓴다 (2차 실행 1쪽 2~7컷이 거의 같았다)
+    private static final double SIMILAR_LINE = 0.4;   // 바로 뒤 컷 대사와 이만큼 비슷하면 다시 쓴다 (187~189번 정상 대사끼리는 0.34 이하)
     /** 대사 안의 행동 설명: "… 거야. *박사님은 미소 지으며 설명한다.*" */
     private static final Pattern STAGE_DIRECTION = Pattern.compile("\\*+[^*]*\\*+");
     /** 한계를 뒤집는 말: "처음엔 느릴 수 있지만, 결국엔 훨씬 빠르게 결과를 낼 수 있어" */
@@ -98,6 +99,38 @@ public final class LineRules {
         if (scene != null && previousScene != null && TextRules.similarity(scene, previousScene) >= SIMILAR_SCENE) {
             problems.add("바로 앞 컷과 장면이 거의 같다: \"%s\". 장소나 인물의 행동·표정 중 하나 이상을 바꿔 다른 장면으로 써라."
                     .formatted(shorten(scene)));
+        }
+        return problems;
+    }
+
+    /**
+     * 여는 컷이 바로 뒤 첫 사실 컷을 베꼈는지. 여는 컷은 사실 컷을 다 쓴 뒤에 쓰고 첫 사실 컷을 보고 이어 쓰게 했더니,
+     * 189번에서 장면을 그대로 옮겨 썼다(장면 유사도 0.81·1.0·0.95, 1쪽 대사 "너무 시간이 오래 걸려요"/"너무 느려요" 0.48).
+     */
+    public static List<String> nextPanelProblems(String scene, List<Line> lines, String nextScene, List<Line> nextLines) {
+        List<String> problems = new ArrayList<>();
+        if (scene != null && nextScene != null && TextRules.similarity(scene, nextScene) >= SIMILAR_SCENE) {
+            problems.add("바로 뒤 첫 사실 컷과 장면이 거의 같다: \"%s\". 이 컷은 그 앞 장면이므로 장소나 인물의 행동·표정을 다르게 쓴다."
+                    .formatted(shorten(scene)));
+        }
+        problems.addAll(similarLineProblems(lines, nextLines, "바로 뒤 첫 사실 컷의 대사", "그 대사로 이어질 다른 말을 쓴다"));
+        return problems;
+    }
+
+    /**
+     * 바로 앞 대사를 되풀이했는지. 앞 대사를 넘겨 이어 쓰게 했더니, 190번 2쪽 첫 사실 컷이 앞 쪽 마지막 대사
+     * "다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?"를 그대로 옮겨 썼다(쪽마다 따로 세는 '같은 대사' 검사에 걸리지 않음).
+     */
+    public static List<String> previousLineProblems(List<Line> lines, List<Line> linesBefore) {
+        return similarLineProblems(lines, linesBefore, "바로 앞 대사", "그 말에 대한 반응이나 다음 이야기를 쓴다");
+    }
+
+    private static List<String> similarLineProblems(List<Line> lines, List<Line> others, String label, String instead) {
+        List<String> problems = new ArrayList<>();
+        for (Line line : lines) {
+            others.stream().filter(other -> TextRules.similarity(line.text(), other.text()) >= SIMILAR_LINE).findFirst()
+                    .ifPresent(other -> problems.add("%s \"%s\"와 거의 같은 말이다: \"%s\". 같은 말을 되풀이하지 말고 %s."
+                            .formatted(label, shorten(other.text()), shorten(line.text()), instead)));
         }
         return problems;
     }

@@ -34,6 +34,12 @@ class ComicWriterTest {
     private static final String[] PLACES = {"연구실 칠판 앞", "학교 복도", "도서관 창가", "실험실 책상", "운동장 벤치", "컴퓨터실"};
     private static final String[] ACTIONS = {"냥박사님이 그림을 그린다", "콩이가 모형을 집어 든다", "냥박사님이 창밖을 가리킨다", "콩이가 노트를 펼친다"};
     private static final int LIMITATION_SENTENCE = 8;
+    /** 사실 2번부터 쓰는 대사. 컷마다 같은 대사를 내면 '바로 앞 대사 되풀이' 검사에 걸린다 */
+    private static final String[] REACTIONS = {"그럼 제가 직접 해 볼게요!", "아하, 그래서 그렇게 되는군요!", "이번엔 제가 틀리게 짐작했네요.",
+            "우와, 생각보다 간단하네요!", "그럼 다음은 어떻게 되나요?", "제가 그려 보니까 알겠어요!", "정말 놀라운 결과예요!"};
+    private static final String[] ANALOGIES = {"요리 순서랑 비슷해.", "지도 읽기랑 비슷해.", "택배 분류랑 비슷해.", "도서관 정리랑 비슷해.",
+            "줄넘기 연습이랑 비슷해.", "퍼즐 맞추기랑 비슷해.", "자전거 타기랑 비슷해."};
+    private static final Pattern FACT_NUMBER = Pattern.compile("사실 (\\d+)번");
 
     static class FakeAi implements AiChatClient {
 
@@ -81,14 +87,17 @@ class ComicWriterTest {
                     // 한계 컷의 두 번째 시도: 단점을 뒤집음 → 한 번 더 다시 쓰기
                     content = "{\"scene\":\"연구실 창가, 콩이가 고개를 갸웃한다\",\"lines\":[{\"speaker\":\"냥박사\",\"text\":\"처음엔 느리지만 결국엔 훨씬 빨라.\"}]}";
                 } else {
-                    // 컷마다 장소와 행동을 바꿔 앞 컷과 다른 장면이 되게 한다
+                    // 컷마다 장소와 행동, 대사를 바꿔 앞 컷과 다른 장면이 되게 한다
                     int n = requests.size();
+                    Matcher number = FACT_NUMBER.matcher(fact);
+                    int k = number.find() ? Integer.parseInt(number.group(1)) : 1;
                     content = """
                             {"scene":"%2$s, %3$s","lines":[
                               {"speaker":"콩이","text":"%4$s"},
-                              {"speaker":"냥박사","text":"레고 조립이랑 비슷해. (해설: 레고는 블록 장난감이다.)"}]}"""
+                              {"speaker":"냥박사","text":"%5$s"}]}"""
                             .formatted(fact, PLACES[n % PLACES.length], ACTIONS[n % ACTIONS.length],
-                                    alwaysAsk ? "냥박사님, " + fact + " 왜 그래요?" : "와, " + fact + " 신기해요!");
+                                    alwaysAsk ? "냥박사님, " + fact + " 왜 그래요?" : k == 1 ? "와, " + fact + " 신기해요!" : REACTIONS[(k - 2) % REACTIONS.length],
+                                    k == 1 ? "레고 조립이랑 비슷해. (해설: 레고는 블록 장난감이다.)" : ANALOGIES[(k - 2) % ANALOGIES.length]);
                 }
             }
             return new ChatResult(content, OllamaServer.PRIMARY, 100, 50, 10);
@@ -211,7 +220,7 @@ class ComicWriterTest {
         WrittenComic.Panel limitationPanel = comic.pages().getLast().panels().get(2);
         assertThat(limitationPanel.evidence()).containsExactly(LIMITATION_SENTENCE);
         assertThat(limitationPanel.lines()).noneMatch(line -> line.text().contains("결국"));
-        // 가짜 AI는 쪽마다 같은 비유 대사를 반복해서 '같은 대사' 문제는 남는다. 한계를 뒤집는 문제만 없으면 된다
+        // 한계를 뒤집는 문제만 없으면 된다
         assertThat(limitationPanel.problems()).noneMatch(problem -> problem.contains("단점을 뒤집는다"));
     }
 
@@ -287,5 +296,24 @@ class ComicWriterTest {
     @Test
     void 이야기_흐름에서_인용_표시와_수식_기호를_지운다() {
         assertThat(ComicWriter.beat(">콩이는 다운샘플링 계수 $f$를 바꿔 본다")).isEqualTo("콩이는 다운샘플링 계수 f를 바꿔 본다");
+    }
+
+    @Test
+    void 쪽이_바뀌면_앞_쪽_마지막_장면과_대사를_콘티와_첫_사실_컷과_여는_컷에_넘긴다() {
+        // 188번: 쪽마다 첫 컷이 "긴 문장은 왜 자꾸 틀리게 번역되나요?"로 되돌아갔다
+        FakeAi ai = new FakeAi();
+        writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        List<String> prompts = ai.requests.stream().filter(messages -> messages.size() == 2).map(messages -> messages.get(1).content()).toList();
+        List<String> boards = prompts.stream().filter(prompt -> prompt.contains("콘티를 짜라")).toList();
+        assertThat(boards.getFirst()).doesNotContain("앞 쪽의 마지막 장면:");
+        assertThat(boards.get(1)).contains("앞 쪽의 마지막 장면: 냥박사님 연구실, 콩이가 노트를 덮으며 활짝 웃는다")
+                .contains("앞 쪽의 마지막 대사: 콩이: 다음이 궁금해요!");
+        assertThat(prompts.stream().filter(prompt -> prompt.contains("이 컷이 전할 사실: 사실 3번 내용이다.")).findFirst()).get().asString()
+                .as("2쪽 첫 사실 컷").contains("바로 앞 대사: 콩이: 다음이 궁금해요!");
+        List<String> staging = prompts.stream().filter(prompt -> prompt.contains("연출 컷 두 개를 써라")).toList();
+        assertThat(staging.getFirst()).contains("이번 쪽 첫 사실 컷의 첫 대사: 콩이: 와, 사실 1번 내용이다. 신기해요!")
+                .doesNotContain("앞 쪽의 마지막 장면:");
+        assertThat(staging.get(1)).contains("앞 쪽의 마지막 대사: 콩이: 다음이 궁금해요!", "이번 쪽 첫 사실 컷의 장면:");
     }
 }

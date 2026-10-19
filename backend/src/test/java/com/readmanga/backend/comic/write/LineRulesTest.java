@@ -204,4 +204,34 @@ class LineRulesTest {
         assertThat(LineRules.repeatedQuestionProblems(ask, false)).as("앞 컷이 질문이 아니면 괜찮다").isEmpty();
         assertThat(LineRules.repeatedQuestionProblems(wow, true)).isEmpty();
     }
+
+    @Test
+    void 여는_컷이_바로_뒤_첫_사실_컷의_장면이나_대사를_베끼면_다시_쓰게_한다() {
+        // 189번 1쪽 1컷(여는 컷)과 2컷(첫 사실 컷)
+        String nextScene = "책상 앞에 앉아 노트북 화면을 응시하는 콩이. 표정은 답답해 보이며, 손가락으로 키보드를 두드리고 있다.";
+        List<LineRules.Line> nextLines = List.of(new LineRules.Line("콩이", "냥박사님, 이 모델로 번역을 시도했는데... 너무 느려요."),
+                new LineRules.Line("냥박사", "왜 그렇게 답답해 보여? 뭐가 문제야?"));
+
+        List<String> copied = LineRules.nextPanelProblems(
+                "콩이가 책상 앞에 앉아 노트북 화면을 응시하고 있다. 콩이의 표정은 답답해 보이며, 손가락으로 키보드를 두드리고 있다.",
+                List.of(new LineRules.Line("콩이", "냥박사님, 이 방식으로 번역을 시도했는데... 너무 시간이 오래 걸려요.")), nextScene, nextLines);
+        List<String> different = LineRules.nextPanelProblems("콩이의 방, 산더미 같은 숙제 종이 사이에서 콩이가 머리를 감싸 쥔다.",
+                List.of(new LineRules.Line("콩이", "오늘 안에 이걸 다 번역할 수 있을까?")), nextScene, nextLines);
+
+        assertThat(copied).hasSize(2).anyMatch(problem -> problem.contains("바로 뒤 첫 사실 컷과 장면이 거의 같다"))
+                .anyMatch(problem -> problem.contains("바로 뒤 첫 사실 컷의 대사"));
+        assertThat(different).isEmpty();
+    }
+
+    @Test
+    void 바로_앞_대사를_되풀이하면_다시_쓰게_한다() {
+        // 190번: 1쪽 마지막 대사를 2쪽 첫 사실 컷이 그대로 옮겨 썼다
+        List<LineRules.Line> before = List.of(new LineRules.Line("콩이", "다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?"));
+
+        assertThat(LineRules.previousLineProblems(List.of(new LineRules.Line("콩이", "다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?"),
+                new LineRules.Line("냥박사", "주의 집중 장치는 일종의 '질문'과 여러 정보 묶음으로 작동하는 거란다.")), before))
+                .containsExactly("바로 앞 대사 \"다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?\"와 거의 같은 말이다: \"다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?\". 같은 말을 되풀이하지 말고 그 말에 대한 반응이나 다음 이야기를 쓴다.");
+        assertThat(LineRules.previousLineProblems(List.of(new LineRules.Line("냥박사", "좋은 질문이야. 단어끼리 서로 얼마나 관련 있는지 먼저 보는 거야.")), before))
+                .isEmpty();
+    }
 }
