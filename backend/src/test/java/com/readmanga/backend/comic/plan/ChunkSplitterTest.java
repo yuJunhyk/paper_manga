@@ -1,7 +1,10 @@
 package com.readmanga.backend.comic.plan;
 
+import com.readmanga.backend.paper.PaperJob;
+import com.readmanga.backend.paper.PaperSentence;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -14,6 +17,36 @@ class ChunkSplitterTest {
 
         assertThat(sections.getLast().title()).isEqualTo("Conclusion");
         assertThat(sections.getLast().end()).isEqualTo(260);
+    }
+
+    @Test
+    void 결론_뒤에_번호_없이_붙은_그림_부록은_본문에서_뺀다() {
+        // 187번(Attention 논문): 결론 뒤 'Attention Visualizations'와 그림 제목이 섹션 이름이 된 'Input-Input Layer5'
+        List<ChunkSplitter.Section> sections = ChunkSplitter.bodySections(sentences(
+                "Introduction", "Conclusion", "Attention Visualizations", "Input-Input Layer5"));
+
+        assertThat(sections).extracting(ChunkSplitter.Section::title).containsExactly("Introduction", "Conclusion");
+    }
+
+    @Test
+    void 결론_뒤의_한계_섹션은_본문에_남긴다() {
+        List<ChunkSplitter.Section> sections = ChunkSplitter.bodySections(sentences(
+                "Introduction", "Concluding remarks", "Limitations", "Acknowledgments"));
+
+        assertThat(sections).extracting(ChunkSplitter.Section::title).containsExactly("Introduction", "Concluding remarks", "Limitations");
+    }
+
+    /** 섹션마다 문장 3개씩 */
+    private static List<PaperSentence> sentences(String... sectionTitles) {
+        PaperJob job = new PaperJob("test.pdf");
+        List<PaperSentence> sentences = new ArrayList<>();
+        int number = 1;
+        for (String title : sectionTitles) {
+            for (int i = 0; i < 3; i++, number++) {
+                sentences.add(new PaperSentence(job, number, title, 1, "Sentence " + number + " explains a finding."));
+            }
+        }
+        return sentences;
     }
 
     @Test

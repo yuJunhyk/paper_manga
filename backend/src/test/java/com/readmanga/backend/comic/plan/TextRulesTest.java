@@ -40,6 +40,8 @@ class TextRulesTest {
         assertThat(TextRules.isAppendixHeading("R d×d i , W")).isFalse();
         assertThat(TextRules.isClosingSection("Limitations & Societal Impact")).isTrue();
         assertThat(TextRules.isClosingSection("Conclusion")).isTrue();
+        assertThat(TextRules.isConclusionSection("Concluding remarks")).isTrue();
+        assertThat(TextRules.isConclusionSection("Limitations and Future Work")).isFalse();
     }
 
     @Test

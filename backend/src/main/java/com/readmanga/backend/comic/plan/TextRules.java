@@ -44,6 +44,9 @@ public final class TextRules {
     private static final Pattern CLOSING_SECTION = Pattern.compile("limitation|conclusion|discussion|future work",
             Pattern.CASE_INSENSITIVE);
 
+    /** 결론 섹션: 'Conclusion', 'Conclusions', 'Concluding remarks'. 이 뒤에 한계·결론이 아닌 섹션이 오면 부록으로 본다. */
+    private static final Pattern CONCLUSION_SECTION = Pattern.compile("conclu", Pattern.CASE_INSENSITIVE);
+
     /** 한계 섹션 (대사가 단점을 뒤집지 않는지 더 살핀다). */
     private static final Pattern LIMITATION_SECTION = Pattern.compile("limitation", Pattern.CASE_INSENSITIVE);
 
@@ -72,6 +75,10 @@ public final class TextRules {
 
     public static boolean isClosingSection(String sectionTitle) {
         return sectionTitle != null && CLOSING_SECTION.matcher(sectionTitle).find();
+    }
+
+    public static boolean isConclusionSection(String sectionTitle) {
+        return sectionTitle != null && CONCLUSION_SECTION.matcher(sectionTitle).find();
     }
 
     public static boolean isLimitationSection(String sectionTitle) {

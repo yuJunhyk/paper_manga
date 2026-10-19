@@ -23,21 +23,28 @@ public final class ChunkSplitter {
         }
     }
 
-    /** 문장들을 번호 순서대로 보며 같은 섹션끼리 묶는다. 부록 섹션이 나오면 거기서 멈춘다. */
+    /**
+     * 문장들을 번호 순서대로 보며 같은 섹션끼리 묶는다. 부록 섹션이 나오면 거기서 멈춘다.
+     * 결론 뒤에 한계·결론이 아닌 섹션이 와도 부록으로 보고 멈춘다. 187번에서 'A.' 같은 번호 없이 붙은 그림 부록
+     * ('Attention Visualizations')의 예시 문장 "The Law will never be perfect…"를 논문 주장으로 뽑았다.
+     */
     public static List<Section> bodySections(List<PaperSentence> sentences) {
         List<Section> sections = new ArrayList<>();
         String title = null;
         int start = -1;
         int end = -1;
+        boolean concluded = false;
         for (PaperSentence sentence : sentences) {
             if (start == -1 || !Objects.equals(sentence.getSectionTitle(), title)) {
                 if (start != -1) {
                     sections.add(new Section(title, start, end));
                 }
-                if (TextRules.isAppendixHeading(sentence.getSectionTitle())) {
+                String next = sentence.getSectionTitle();
+                if (TextRules.isAppendixHeading(next) || (concluded && !TextRules.isClosingSection(next))) {
                     return sections;
                 }
-                title = sentence.getSectionTitle();
+                concluded |= TextRules.isConclusionSection(next);
+                title = next;
                 start = sentence.getNumber();
             }
             end = sentence.getNumber();
