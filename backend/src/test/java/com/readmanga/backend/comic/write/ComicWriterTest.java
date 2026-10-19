@@ -30,6 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ComicWriterTest {
 
     private static final Pattern FACT = Pattern.compile("이 컷이 전할 사실: (.+)");
+    private static final Pattern VERIFY_LINE = Pattern.compile("^\\d+\\. (콩이|냥박사): .+$", Pattern.MULTILINE);
     private static final String LIMITATION_RULE_START = "7. 이 사실은 논문의 한계";
     private static final String[] PLACES = {"연구실 칠판 앞", "학교 복도", "도서관 창가", "실험실 책상", "운동장 벤치", "컴퓨터실"};
     private static final String[] ACTIONS = {"냥박사님이 그림을 그린다", "콩이가 모형을 집어 든다", "냥박사님이 창밖을 가리킨다", "콩이가 노트를 펼친다"};
@@ -47,6 +48,7 @@ class ComicWriterTest {
         boolean reverseBoard;   // 콘티가 사실 순서를 거꾸로 바꾼다
         boolean brokenBoard;    // 콘티가 같은 사실 번호를 두 번 쓴다 (끝까지 고치지 않음)
         boolean alwaysAsk;      // 콩이가 컷마다 "냥박사님, …?" 질문으로 시작한다
+        boolean wrongDoctor;    // 대사 확인이 냥박사 대사를 늘 '어긋남'으로 판정한다 (다시 써도 고치지 않음)
 
         @Override
         public ChatResult chat(String model, List<ChatMessage> messages, Map<String, Object> schema) {
@@ -73,6 +75,15 @@ class ComicWriterTest {
                     items.add("{\"fact\":%d,\"plan\":\"앞 컷에 이어 콩이가 %d번째로 직접 해 본다\"}".formatted(fact, k));
                 }
                 content = "{\"panels\":[" + String.join(",", items) + "]}";
+            } else if (properties.containsKey("results")) {
+                List<String> verdicts = new ArrayList<>();
+                Matcher line = VERIFY_LINE.matcher(prompt);
+                for (int number = 1; line.find(); number++) {
+                    boolean wrong = wrongDoctor && line.group(1).equals("냥박사");
+                    verdicts.add("{\"line\":%d,\"verdict\":\"%s\",\"reason\":\"%s\"}"
+                            .formatted(number, wrong ? "어긋남" : "맞음", wrong ? "비유가 사실과 반대다" : "풀어 썼다"));
+                }
+                content = "{\"results\":[" + String.join(",", verdicts) + "]}";
             } else if (properties.containsKey("opening")) {
                 content = """
                         {"opening":{"scene":"콩이의 방, 멈춘 컴퓨터 앞에서 콩이가 한숨을 쉰다","lines":[{"speaker":"해설","text":"콩이는 고민에 빠졌다."}]},
@@ -273,7 +284,8 @@ class ComicWriterTest {
     void 대본_지시문에는_첫_논문의_소재가_예시로_남아_있지_않다() {
         // 두 번째 논문(176번)의 이야기에 예시 '숙제로 고화질 그림을…'이 '고화질 데이터 시각화 만화'로 새어 나왔다
         assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE, WritePrompts.CHARACTERS, WritePrompts.STYLE_EXAMPLE,
-                WritePrompts.STORY, WritePrompts.STORYBOARD, WritePrompts.LIMITATION_RULE, WritePrompts.FACT_PANEL, WritePrompts.STAGING))
+                WritePrompts.STORY, WritePrompts.STORYBOARD, WritePrompts.LIMITATION_RULE, WritePrompts.FACT_PANEL, WritePrompts.STAGING,
+                WritePrompts.LINE_VERIFY_SYSTEM, WritePrompts.LINE_VERIFY))
                 .noneMatch(prompt -> prompt.contains("잠재") || prompt.contains("확산") || prompt.contains("GAN") || prompt.contains("고화질"));
         assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE))
                 .as("예시 낱말은 무엇이든 새어 나온다 (178번 '표본 크기(sample size)')").noneMatch(prompt -> prompt.contains("예:"));
@@ -315,5 +327,24 @@ class ComicWriterTest {
         assertThat(staging.getFirst()).contains("이번 쪽 첫 사실 컷의 첫 대사: 콩이: 와, 사실 1번 내용이다. 신기해요!")
                 .doesNotContain("앞 쪽의 마지막 장면:");
         assertThat(staging.get(1)).contains("앞 쪽의 마지막 대사: 콩이: 다음이 궁금해요!", "이번 쪽 첫 사실 컷의 장면:");
+    }
+
+    @Test
+    void 사실_컷의_인물_대사는_사실과_근거_원문에_대조하고_다시_써도_어긋나면_뺀다() {
+        // 188번: 학습률을 '처음에 늘리고 나중에 줄인다'는 사실에 냥박사가 '점점 속도를 올리는 것'이라는 비유를 했다
+        FakeAi ai = new FakeAi();
+        ai.wrongDoctor = true;
+        WrittenComic comic = writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        String verifyPrompt = ai.requests.stream().map(messages -> messages.get(1).content())
+                .filter(prompt -> prompt.contains("대사마다 판정하라") && prompt.contains("이 컷의 사실: 사실 1번 내용이다."))
+                .filter(prompt -> prompt.contains("레고")).findFirst().orElseThrow();
+        assertThat(verifyPrompt).contains("근거 원문: [1] Original sentence 1 of the paper.", "2. 냥박사: 레고 조립이랑 비슷해.");
+        assertThat(ai.requests.stream().filter(messages -> messages.size() >= 4).map(messages -> messages.getLast().content()))
+                .anyMatch(content -> content.contains("2번 대사 \"레고 조립이랑 비슷해.\"는 사실과 어긋난다: 비유가 사실과 반대다"));
+        WrittenComic.Panel factPanel = comic.pages().getFirst().panels().get(1);
+        assertThat(factPanel.lines()).extracting(LineRules.Line::speaker).doesNotContain("냥박사");
+        assertThat(factPanel.lines()).contains(new LineRules.Line("콩이", "와, 사실 1번 내용이다. 신기해요!"),
+                new LineRules.Line("해설", "사실 1번 내용이다."));
     }
 }

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +30,7 @@ import java.util.stream.Stream;
  * ③ 콘티 순서대로 사실 컷을 하나씩 따로 쓴다. 요청마다 사실이 하나뿐이라 다른 사실과 섞일 수 없다(5차 시험의 한 칸 밀림 방지).
  *    컷마다 줄거리와 바로 앞 대사를 넘겨 앞 컷에 이어지게 한다(186번: 컷마다 따로 써서 질문 나열이 됨).
  *    사실 컷의 해설은 AI가 아니라 코드가 검증된 사실 문장으로 넣는다(6차 시험의 덧붙임 방지).
+ *    인물 대사는 AI가 사실·근거 원문과 다시 대조해, 어긋나거나 덧붙인 대사를 다시 쓰게 하고 끝까지 남으면 뺀다(188번).
  * ④ 쪽마다 여는 연출 컷과 닫는 연출 컷을 쓴다.
  * 쪽이 바뀔 때는 앞 쪽 마지막 컷의 장면과 대사를 다음 쪽의 콘티·첫 사실 컷·여는 컷에 넘긴다(188번: 쪽마다 같은 불평으로 되돌아감).
  * 한계 섹션에서 나온 사실 컷은 단점을 뒤집는 대사가 없는지 더 살핀다(실제 실행 1차).
@@ -65,6 +67,12 @@ public class ComicWriter {
     }
 
     record StagingAnswer(PanelAnswer opening, PanelAnswer closing) {
+    }
+
+    record LineVerifyAnswer(List<LineVerifyItem> results) {
+    }
+
+    record LineVerifyItem(int line, String verdict, String reason) {
     }
 
     record StoryboardAnswer(List<StoryboardItem> panels) {
@@ -265,6 +273,7 @@ public class ComicWriter {
             context.append("바로 앞 대사: ").append(say(last)).append('\n');
         }
         boolean previousWasQuestion = LineRules.isAddressedQuestion(linesBefore);
+        Map<PanelAnswer, Set<Integer>> wrongLines = new IdentityHashMap<>();  // 시도마다 사실과 맞지 않은 대사 번호
         String prompt = WritePrompts.FACT_PANEL.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
                 context.toString(), fact.fact(), quotes, limitation ? WritePrompts.LIMITATION_RULE : "");
         AiAsker.Answer<PanelAnswer> answer = aiAsker.ask(model, WritePrompts.PANEL_SYSTEM + plan.termGuide(), prompt, panelSchema(FACT_SPEAKERS, 2),
@@ -278,15 +287,77 @@ public class ComicWriter {
                     problems.addAll(TextRules.termVariantProblems("사실 컷", text, plan.terms()));
                     problems.addAll(LineRules.repeatedQuestionProblems(lines(value), previousWasQuestion));
                     problems.addAll(LineRules.previousLineProblems(spoken(lines(value)), linesBefore));
+                    problems.addAll(lineProblems(plan, fact, quotes, value, wrongLines, servers));
                     return problems;
                 }, PANEL_RETRIES);
         answer.attempts().forEach(attempt -> servers.add(attempt.server()));
 
-        List<LineRules.Line> lines = new ArrayList<>(LineRules.tidy(lines(answer.value())));
+        List<LineRules.Line> lines = new ArrayList<>(withoutWrongLines(LineRules.tidy(lines(answer.value())),
+                wrongLines.getOrDefault(answer.value(), Set.of()), page.pageNumber()));
         lines.add(new LineRules.Line("해설", fact.fact()));  // 해설은 검증된 사실 그대로
         lines.forEach(line -> seenLines.add(line.text()));
         return new WrittenComic.Panel(LineRules.tidyScene(answer.value().scene()), false, fact.fact(), lines, fact.evidence(),
                 answer.problems());
+    }
+
+    /**
+     * 대사 확인: 인물 대사를 이 컷의 사실·근거 원문과 대조한다(AI 요청 1번). '어긋남'·'덧붙임'이 나온 대사는 다시 쓰게 하고
+     * 번호를 wrongLines에 적어 둔다. 확인 자체가 깨지면(답이 모두 잘림 등) 작업을 멈추지 않고 건너뛴다.
+     */
+    private List<String> lineProblems(ComicPlan plan, ComicPlan.FactPlan fact, String quotes, PanelAnswer value,
+                                      Map<PanelAnswer, Set<Integer>> wrongLines, Set<String> servers) {
+        List<LineRules.Line> spoken = spoken(LineRules.tidy(lines(value)));
+        if (spoken.isEmpty()) {
+            return List.of();
+        }
+        StringBuilder numbered = new StringBuilder();
+        for (int index = 0; index < spoken.size(); index++) {
+            numbered.append("%d. %s%n".formatted(index + 1, say(spoken.get(index))));
+        }
+        Map<String, Object> schema = JsonSchemas.object("results", JsonSchemas.array(
+                JsonSchemas.object("line", JsonSchemas.integer(), "verdict", JsonSchemas.stringEnum(WritePrompts.LINE_VERDICTS),
+                        "reason", JsonSchemas.string()),
+                spoken.size(), spoken.size()));
+        AiAsker.Answer<LineVerifyAnswer> verdict;
+        try {
+            verdict = aiAsker.ask(properties.factModel(), WritePrompts.LINE_VERIFY_SYSTEM + plan.termGuide(),
+                    WritePrompts.LINE_VERIFY.formatted(fact.fact(), quotes, numbered.toString().trim()), schema, LineVerifyAnswer.class,
+                    answer -> answer.results() != null && answer.results().size() == spoken.size() ? List.of()
+                            : List.of("results에 대사 %d개를 모두 순서대로 넣는다.".formatted(spoken.size())), 0);
+        } catch (IllegalStateException e) {
+            log.warn("대사 확인을 건너뜁니다: {}", e.getMessage());
+            return List.of();
+        }
+        verdict.attempts().forEach(attempt -> servers.add(attempt.server()));
+        List<LineVerifyItem> results = verdict.value().results() == null ? List.of() : verdict.value().results();
+        List<String> problems = new ArrayList<>();
+        Set<Integer> wrong = new HashSet<>();
+        for (int index = 0; index < Math.min(spoken.size(), results.size()); index++) {
+            LineVerifyItem result = results.get(index);
+            if ("맞음".equals(result.verdict())) {
+                continue;
+            }
+            wrong.add(index);
+            problems.add("%d번 대사 \"%s\"는 사실과 %s: %s. 이 컷의 사실과 근거 원문에 맞게 고쳐 쓴다."
+                    .formatted(index + 1, shorten(spoken.get(index).text(), 40),
+                            "어긋남".equals(result.verdict()) ? "어긋난다" : "원문에 없는 내용을 덧붙였다", result.reason()));
+        }
+        wrongLines.put(value, wrong);
+        return problems;
+    }
+
+    /** 다시 써도 사실과 맞지 않은 인물 대사는 뺀다(해설은 남긴다). wrong은 인물 대사만 센 번호(0부터). */
+    private static List<LineRules.Line> withoutWrongLines(List<LineRules.Line> lines, Set<Integer> wrong, int pageNumber) {
+        List<LineRules.Line> result = new ArrayList<>();
+        int spokenIndex = 0;
+        for (LineRules.Line line : lines) {
+            if (!Speaker.NARRATION.getLabel().equals(line.speaker()) && wrong.contains(spokenIndex++)) {
+                log.info("{}쪽 사실 컷에서 사실과 맞지 않는 대사를 뺐습니다: {}", pageNumber, say(line));
+                continue;
+            }
+            result.add(line);
+        }
+        return result;
     }
 
     private List<WrittenComic.Panel> writeStagingPanels(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting,
