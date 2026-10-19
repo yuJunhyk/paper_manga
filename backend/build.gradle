@@ -20,6 +20,9 @@ repositories {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// DB 구조 변경을 번호 붙은 SQL 파일(src/main/resources/db/migration)로 기록하고 순서대로 적용한다
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	runtimeOnly 'org.flywaydb:flyway-database-postgresql'
 	runtimeOnly 'org.postgresql:postgresql'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
 	// 테스트마다 일회용 PostgreSQL 컨테이너를 띄워 실제 DB와 분리한다 (버전은 Spring Boot가 관리)
