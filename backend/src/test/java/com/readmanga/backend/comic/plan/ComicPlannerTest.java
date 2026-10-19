@@ -341,4 +341,30 @@ class ComicPlannerTest {
         assertThat(plan.pages().stream().flatMap(page -> page.facts().stream()).map(ComicPlan.FactPlan::fact))
                 .noneMatch(fact -> fact.contains("레이턴트"));
     }
+
+    @Test
+    void 같은_결과_숫자를_말하는_사실은_요약_섹션_쪽을_버리고_하나만_남긴다() {
+        // 187번: 초록(5번)과 실험 절(154번)의 'BLEU 28.4'가 1쪽과 3쪽에 두 번 나왔다
+        PaperJob job = new PaperJob("attention.pdf");
+        Map<Integer, PaperSentence> byNumber = Map.of(
+                5, new PaperSentence(job, 5, "Abstract", 1, "Our model achieves 28.4 BLEU."),
+                140, new PaperSentence(job, 140, "Regularization", 7, "We apply dropout with a rate of 0.1."),
+                141, new PaperSentence(job, 141, "Regularization", 7, "We employ label smoothing of value 0.1."),
+                154, new PaperSentence(job, 154, "Machine Translation", 8, "The big model establishes a new BLEU score of 28.4."));
+        ComicPlan.FactPlan fromAbstract = new ComicPlan.FactPlan(
+                "이 연구의 모델은 기존 최고 성능의 결과보다 2 블루 점수 이상 향상된 28.4 블루 점수를 달성했다.", List.of(5), "초록");
+        ComicPlan.FactPlan dropout = new ComicPlan.FactPlan("이 연구는 각 하위 계층 출력에 비율 0.1의 드롭아웃을 적용했다.", List.of(140), "규제");
+        ComicPlan.FactPlan smoothing = new ComicPlan.FactPlan("학습 중 값이 0.1인 라벨 스무딩을 썼다.", List.of(141), "규제");
+        ComicPlan.FactPlan fromResults = new ComicPlan.FactPlan(
+                "이 큰 트랜스포머 모델은 WMT 2014 영어-독일 번역 과제에서 기존 최고 성능 모델들보다 2.0 블루 점수 이상 높게 나와 새로운 최고 수준의 블루 점수인 28.4를 달성했다.",
+                List.of(154), "실험");
+        List<ComicPlan.PagePlan> pages = List.of(
+                new ComicPlan.PagePlan(1, "기", "", List.of(), List.of(fromAbstract)),
+                new ComicPlan.PagePlan(3, "전", "", List.of(), List.of(dropout, smoothing, fromResults)));
+
+        List<ComicPlan.PagePlan> result = ComicPlanner.dropRepeatedResults(pages, byNumber);
+
+        assertThat(result.getFirst().facts()).as("초록 쪽 사실을 버린다").isEmpty();
+        assertThat(result.getLast().facts()).as("숫자 0.1만 같은 다른 사실은 남긴다").containsExactly(dropout, smoothing, fromResults);
+    }
 }

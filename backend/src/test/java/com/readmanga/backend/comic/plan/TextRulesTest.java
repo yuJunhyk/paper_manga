@@ -45,6 +45,12 @@ class TextRulesTest {
     }
 
     @Test
+    void 결과_숫자는_소수와_백분율만_고른다() {
+        assertThat(TextRules.resultValues("WMT 2014에서 2 블루 점수 이상 향상된 28.4 블루 점수, 정확도 12 % 상승"))
+                .containsExactlyInAnyOrder("28.4", "12%");
+    }
+
+    @Test
     void 비슷한_사실의_유사도가_시험_단계와_같다() {
         // 같은 근거, 다른 내용 → 0.35 미만이라 둘 다 남는다
         assertThat(TextRules.similarity("잠재 확산 모델은 픽셀 기반 모델에 비해 계산 요구가 적다.",

@@ -40,6 +40,7 @@ public class ComicPlanner {
     static final int MAX_RETRIES = 1;
     static final double SIMILAR_FACT = 0.55;             // 어떤 사실과든 이만큼 비슷하면 버린다
     static final double SIMILAR_FACT_SAME_EVIDENCE = 0.35;  // 근거 문장이 겹치는 사실과 이만큼 비슷하면 버린다
+    static final double SIMILAR_RESULT = 0.2;            // 같은 결과 숫자를 말하는 사실과 이만큼 비슷하면 같은 결과로 본다
 
     private final AiAsker aiAsker;
     private final OllamaProperties properties;
@@ -173,6 +174,9 @@ public class ComicPlanner {
             PageRole role = roles.get(page);
             pages.add(new ComicPlan.PagePlan(page + 1, role.name(), role.meaning(), chunkPlans, facts));
         }
+        int beforeRepeats = pages.stream().mapToInt(page -> page.facts().size()).sum();
+        pages = dropRepeatedResults(pages, byNumber);
+        dropped += beforeRepeats - pages.stream().mapToInt(page -> page.facts().size()).sum();
         long factMillis = System.currentTimeMillis() - started;
         log.info("만화 설계 끝: 조각 제목 {}ms, 핵심 사실 추출 {}ms, 버린 사실 {}개, 사용한 AI 서버 {}", titleMillis, factMillis, dropped, servers);
 
@@ -457,6 +461,43 @@ public class ComicPlanner {
         evidence.forEach(number -> usedEvidence.computeIfAbsent(number, key -> new ArrayList<>()).add(text));
         acceptedFacts.add(text);
         return new ComicPlan.FactPlan(text, evidence, title.title());
+    }
+
+    /**
+     * 같은 결과 숫자(28.4, 0.750, 12%)를 말하는 비슷한 사실이 여러 번 나오면 하나만 남긴다. 187번에서 초록과 실험 절이
+     * 같은 'BLEU 28.4'를 말해서 1쪽과 3쪽에 두 번 나왔다(조각이 달라서 앞의 반복 검사에 걸리지 않음).
+     * 초록·서론·결론은 본문 결과의 요약이므로 한쪽만 요약 섹션이면 그쪽을 버리고, 아니면 뒤에 나온 쪽을 버린다.
+     * 숫자만 같고 글이 거의 안 겹치면(드롭아웃 0.1과 라벨 스무딩 0.1처럼) 다른 사실로 본다.
+     */
+    static List<ComicPlan.PagePlan> dropRepeatedResults(List<ComicPlan.PagePlan> pages, Map<Integer, PaperSentence> byNumber) {
+        List<ComicPlan.FactPlan> facts = pages.stream().flatMap(page -> page.facts().stream()).toList();
+        Set<ComicPlan.FactPlan> repeated = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        for (int i = 0; i < facts.size(); i++) {
+            for (int j = i + 1; j < facts.size(); j++) {
+                ComicPlan.FactPlan first = facts.get(i);
+                ComicPlan.FactPlan second = facts.get(j);
+                if (repeated.contains(first) || repeated.contains(second) || !isSameResult(first.fact(), second.fact())) {
+                    continue;
+                }
+                boolean dropFirst = isSummary(first, byNumber) && !isSummary(second, byNumber);
+                ComicPlan.FactPlan drop = dropFirst ? first : second;
+                log.info("같은 결과를 말하는 사실을 버렸습니다: {} (남긴 사실: {})", drop.fact(), (dropFirst ? second : first).fact());
+                repeated.add(drop);
+            }
+        }
+        return pages.stream().map(page -> new ComicPlan.PagePlan(page.pageNumber(), page.role(), page.roleMeaning(), page.chunks(),
+                page.facts().stream().filter(fact -> !repeated.contains(fact)).toList())).toList();
+    }
+
+    private static boolean isSameResult(String first, String second) {
+        Set<String> shared = new java.util.HashSet<>(TextRules.resultValues(first));
+        shared.retainAll(TextRules.resultValues(second));
+        return !shared.isEmpty() && TextRules.similarity(first, second) >= SIMILAR_RESULT;
+    }
+
+    /** 근거 문장이 모두 초록·서론·결론에 있는 사실 */
+    private static boolean isSummary(ComicPlan.FactPlan fact, Map<Integer, PaperSentence> byNumber) {
+        return fact.evidence().stream().allMatch(number -> TextRules.isSummarySection(byNumber.get(number).getSectionTitle()));
     }
 
     private static List<String> unknownTermProblems(String label, String text, Set<String> paperWords) {

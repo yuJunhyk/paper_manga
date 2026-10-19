@@ -47,6 +47,12 @@ public final class TextRules {
     /** 결론 섹션: 'Conclusion', 'Conclusions', 'Concluding remarks'. 이 뒤에 한계·결론이 아닌 섹션이 오면 부록으로 본다. */
     private static final Pattern CONCLUSION_SECTION = Pattern.compile("conclu", Pattern.CASE_INSENSITIVE);
 
+    /** 초록·서론·결론: 본문 결과를 미리 또는 다시 요약하는 섹션. */
+    private static final Pattern SUMMARY_SECTION = Pattern.compile("abstract|introduction|conclu", Pattern.CASE_INSENSITIVE);
+
+    /** 결과 숫자: 소수점이 있는 수(28.4, 0.750)와 백분율(12%). 연도·개수 같은 정수는 겹쳐도 같은 결과라고 볼 수 없어 뺀다. */
+    private static final Pattern RESULT_VALUE = Pattern.compile("\\d+\\.\\d+|\\d+(\\.\\d+)?\\s*%");
+
     /** 한계 섹션 (대사가 단점을 뒤집지 않는지 더 살핀다). */
     private static final Pattern LIMITATION_SECTION = Pattern.compile("limitation", Pattern.CASE_INSENSITIVE);
 
@@ -79,6 +85,17 @@ public final class TextRules {
 
     public static boolean isConclusionSection(String sectionTitle) {
         return sectionTitle != null && CONCLUSION_SECTION.matcher(sectionTitle).find();
+    }
+
+    public static boolean isSummarySection(String sectionTitle) {
+        return sectionTitle != null && SUMMARY_SECTION.matcher(sectionTitle).find();
+    }
+
+    /** 글에 나온 결과 숫자들 (띄어쓰기는 지운다: '12 %' → '12%'). */
+    public static Set<String> resultValues(String text) {
+        Set<String> values = new HashSet<>();
+        RESULT_VALUE.matcher(text == null ? "" : text).results().forEach(match -> values.add(match.group().replace(" ", "")));
+        return values;
     }
 
     public static boolean isLimitationSection(String sectionTitle) {
