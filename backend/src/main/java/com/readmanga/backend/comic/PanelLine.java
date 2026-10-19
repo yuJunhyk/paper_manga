@@ -11,7 +11,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 
-/** 컷 안의 대사 한 줄. 누리, 박사님, 해설 중 누가 말하는지(speaker)를 담는다. */
+/** 컷 안의 대사 한 줄. 콩이, 냥박사, 해설 중 누가 말하는지(speaker)를 담는다. */
 @Entity
 public class PanelLine {
 

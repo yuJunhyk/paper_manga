@@ -45,10 +45,10 @@ class ComicStoreTest {
     EntityManager entityManager;
 
     private static WrittenComic written(String title) {
-        WrittenComic.Panel opening = new WrittenComic.Panel("누리의 방", true, null,
-                List.of(new LineRules.Line("해설", "누리는 고민에 빠졌다.")), List.of(), List.of());
+        WrittenComic.Panel opening = new WrittenComic.Panel("콩이의 방", true, null,
+                List.of(new LineRules.Line("해설", "콩이는 고민에 빠졌다.")), List.of(), List.of());
         WrittenComic.Panel fact = new WrittenComic.Panel("연구실 칠판 앞", false, "잠재 확산 모델은 GAN보다 샘플링이 느리다.",
-                List.of(new LineRules.Line("누리", "단점은 없어요?"), new LineRules.Line("박사님", "조금 느려."),
+                List.of(new LineRules.Line("콩이", "단점은 없어요?"), new LineRules.Line("냥박사", "조금 느려."),
                         new LineRules.Line("해설", "잠재 확산 모델은 GAN보다 샘플링이 느리다.")), List.of(239), List.of());
         WrittenComic.Page page = new WrittenComic.Page(4, "결", "한계를 배운다", List.of(opening, fact));
         return new WrittenComic(title, "풍경화 숙제", "그림 완성", List.of(page), 1000, List.of("주 서버"));
@@ -69,7 +69,7 @@ class ComicStoreTest {
         ComicResponse comic = comicQuery.find(job.getId());
         assertThat(comic.title()).isEqualTo("만화 1");
         ComicResponse.PanelResponse factPanel = comic.pages().getFirst().panels().get(1);
-        assertThat(factPanel.lines()).extracting(ComicResponse.LineResponse::speaker).containsExactly("누리", "박사님", "해설");
+        assertThat(factPanel.lines()).extracting(ComicResponse.LineResponse::speaker).containsExactly("콩이", "냥박사", "해설");
         assertThat(factPanel.evidence()).extracting(ComicResponse.EvidenceResponse::number).containsExactly(239);
         assertThat(factPanel.evidence().getFirst().page()).isEqualTo(9);
 

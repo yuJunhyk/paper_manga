@@ -2,9 +2,13 @@ package com.readmanga.backend.comic;
 
 import java.util.Arrays;
 
+/**
+ * 대사의 화자. 상수 이름(NURI, DOCTOR)은 DB에 저장되는 값이라 그대로 두고, 보이는 이름(label)만 바꾼다.
+ * 2026-10-06: 누리·박사님 → 콩이(흰 햄스터 학생)·냥박사(안경 쓴 고양이 박사). 예전 만화도 새 이름으로 보인다.
+ */
 public enum Speaker {
-    NURI("누리"),
-    DOCTOR("박사님"),
+    NURI("콩이"),
+    DOCTOR("냥박사"),
     NARRATION("해설");
 
     private final String label;

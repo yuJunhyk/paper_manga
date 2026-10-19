@@ -1,5 +1,6 @@
 package com.readmanga.backend.comic.write;
 
+import com.readmanga.backend.comic.Speaker;
 import com.readmanga.backend.comic.plan.TextRules;
 
 import java.util.ArrayList;
@@ -47,6 +48,9 @@ public final class LineRules {
 
     private LineRules() {
     }
+
+    private static final String STUDENT = Speaker.NURI.getLabel();
+    private static final String DOCTOR = Speaker.DOCTOR.getLabel();
 
     public record Line(String speaker, String text) {
     }
@@ -132,12 +136,12 @@ public final class LineRules {
             if (text.length() > MAX_LINE_LENGTH) {
                 problems.add("대사가 너무 길다(%d자): \"%s\". 60자 안팎으로 줄여라.".formatted(text.length(), shorten(text)));
             }
-            if ("박사님".equals(line.speaker()) && SENTENCE.matcher(text).results()
+            if (DOCTOR.equals(line.speaker()) && SENTENCE.matcher(text).results()
                     .anyMatch(sentence -> POLITE_ENDING.matcher(sentence.group().strip()).find())) {
-                problems.add("박사님이 존댓말을 썼다: \"%s\". 박사님은 누리에게 반말을 쓴다.".formatted(shorten(text)));
+                problems.add("%s가 존댓말을 썼다: \"%s\". %s는 %s에게 반말을 쓴다.".formatted(DOCTOR, shorten(text), DOCTOR, STUDENT));
             }
-            if ("해설".equals(line.speaker()) && text.contains("누리야")) {
-                problems.add("해설이 누리에게 말을 걸었다: \"%s\". 해설은 설명문으로 쓴다.".formatted(shorten(text)));
+            if ("해설".equals(line.speaker()) && text.contains(STUDENT + "야")) {
+                problems.add("해설이 %s에게 말을 걸었다: \"%s\". 해설은 설명문으로 쓴다.".formatted(STUDENT, shorten(text)));
             }
             if ("해설".equals(line.speaker()) && SPEECH_ENDING.matcher(text).find()) {
                 problems.add("해설이 인물 말투나 존댓말로 끝난다: \"%s\". 해설은 '~이다', '~했다'로 끝나는 설명문으로 써라.".formatted(shorten(text)));
@@ -157,6 +161,24 @@ public final class LineRules {
      * 한계 사실 컷의 추가 검사: 단점을 '결국엔 더 빨라' 같은 말로 뒤집지 않았는지.
      * 낱말로만 보므로 정상 대사가 걸릴 수 있지만, 그때는 다시 쓰기를 한 번 더 할 뿐이다.
      */
+    /**
+     * 학생이 박사를 부르며 묻는 대사로 시작하는 컷인지: "냥박사님, …인가요?".
+     * 컷마다 이 모양만 되풀이되면 묻고 답하기의 나열이 되어 이야기가 이어지지 않는다(186번: 사실 컷 22개 중 20개).
+     */
+    public static boolean isAddressedQuestion(List<Line> lines) {
+        return lines.stream().filter(line -> STUDENT.equals(line.speaker())).findFirst()
+                .map(line -> line.text().strip())
+                .map(text -> text.startsWith(DOCTOR) && text.endsWith("?"))
+                .orElse(false);
+    }
+
+    /** 앞 컷도 같은 모양의 질문으로 시작했으면 다시 쓰게 한다. */
+    public static List<String> repeatedQuestionProblems(List<Line> lines, boolean previousWasQuestion) {
+        return previousWasQuestion && isAddressedQuestion(lines)
+                ? List.of("앞 컷도 '%s님, …?' 질문으로 시작했다. 바로 앞 대사에 이어서, 감탄·시도·발견처럼 다른 방식으로 시작한다.".formatted(DOCTOR))
+                : List.of();
+    }
+
     public static List<String> limitationProblems(List<Line> lines) {
         return lines.stream().filter(line -> REVERSAL.matcher(line.text()).find())
                 .map(line -> "이 컷의 사실은 연구의 한계인데 대사가 단점을 뒤집는다: \"%s\". 단점을 부정하거나 장점으로 바꾸지 말고 그대로 인정한다."

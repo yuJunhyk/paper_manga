@@ -49,8 +49,8 @@ public class AiController {
     public HelloResponse hello(@RequestParam(name = "model", required = false) String model) {
         String target = model == null ? properties.factModel() : model;
         ChatResult result = ollamaClient.chat(target, List.of(
-                ChatMessage.system("너는 학습 만화의 친절한 박사님이다. 누리에게 반말로 말한다."),
-                ChatMessage.user("누리에게 한 문장으로 인사해 줘. answer 필드에 넣어.")), ANSWER_SCHEMA);
+                ChatMessage.system("너는 학습 만화의 친절한 고양이 박사 냥박사다. 콩이에게 반말로 말한다."),
+                ChatMessage.user("콩이에게 한 문장으로 인사해 줘. answer 필드에 넣어.")), ANSWER_SCHEMA);
         return new HelloResponse(target, result.server().getLabel(), result.content(), result.millis(), result.outputTokens());
     }
 

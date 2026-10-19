@@ -50,7 +50,7 @@ class ComicQueryTest {
     @Test
     void 만화_하나를_조회할_때_DB_질의는_쪽_컷_수와_상관없이_몇_번이면_된다() {
         PaperJob job = paperJobRepository.save(new PaperJob("test.pdf"));
-        Comic comic = new Comic(job, "데이터 만화 이야기", "누리가 그래프를 어려워한다", "누리가 데이터를 이해한다");
+        Comic comic = new Comic(job, "데이터 만화 이야기", "콩이가 그래프를 어려워한다", "콩이가 데이터를 이해한다");
         int number = 1;
         for (int pageNumber = 1; pageNumber <= PAGES; pageNumber++) {
             ComicPage page = comic.addPage(pageNumber, "기", "흐름");
@@ -58,7 +58,7 @@ class ComicQueryTest {
                 PaperSentence sentence = paperSentenceRepository.save(new PaperSentence(job, number, "Results", pageNumber,
                         "Sentence " + number + " reports a finding."));
                 ComicPanel panel = page.addPanel("장면 " + number, false, "사실 " + number);
-                panel.addLine(Speaker.NURI, "박사님, 이건 뭐예요?");
+                panel.addLine(Speaker.NURI, "냥박사님, 이건 뭐예요?");
                 panel.addLine(Speaker.NARRATION, "사실 " + number);
                 panel.addEvidence(sentence);
             }

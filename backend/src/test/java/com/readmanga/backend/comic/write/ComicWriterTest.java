@@ -24,7 +24,7 @@ import java.util.stream.Stream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 가짜 AI로 대본 쓰기 흐름을 확인한다. 시험 단계에서 나온 실수(긴 대사, 박사님 존댓말, 해설 괄호)와
+ * 가짜 AI로 대본 쓰기 흐름을 확인한다. 시험 단계에서 나온 실수(긴 대사, 냥박사님 존댓말, 해설 괄호)와
  * 실제 실행 1차에서 나온 실수(장면에 섞인 대사, 한계를 뒤집는 대사)를 섞는다.
  */
 class ComicWriterTest {
@@ -32,12 +32,15 @@ class ComicWriterTest {
     private static final Pattern FACT = Pattern.compile("이 컷이 전할 사실: (.+)");
     private static final String LIMITATION_RULE_START = "7. 이 사실은 논문의 한계";
     private static final String[] PLACES = {"연구실 칠판 앞", "학교 복도", "도서관 창가", "실험실 책상", "운동장 벤치", "컴퓨터실"};
-    private static final String[] ACTIONS = {"박사님이 그림을 그린다", "누리가 모형을 집어 든다", "박사님이 창밖을 가리킨다", "누리가 노트를 펼친다"};
+    private static final String[] ACTIONS = {"냥박사님이 그림을 그린다", "콩이가 모형을 집어 든다", "냥박사님이 창밖을 가리킨다", "콩이가 노트를 펼친다"};
     private static final int LIMITATION_SENTENCE = 8;
 
     static class FakeAi implements AiChatClient {
 
         final List<List<ChatMessage>> requests = new ArrayList<>();
+        boolean reverseBoard;   // 콘티가 사실 순서를 거꾸로 바꾼다
+        boolean brokenBoard;    // 콘티가 같은 사실 번호를 두 번 쓴다 (끝까지 고치지 않음)
+        boolean alwaysAsk;      // 콩이가 컷마다 "냥박사님, …?" 질문으로 시작한다
 
         @Override
         public ChatResult chat(String model, List<ChatMessage> messages, Map<String, Object> schema) {
@@ -50,32 +53,42 @@ class ComicWriterTest {
             if (properties.containsKey("setting")) {
                 // 칸 이름으로 받으므로 각 쪽의 흐름이 자기 칸에 들어간다. 흐름 안에 따옴표 대사, '**이름표**:', '2쪽:'도 섞는다(2차 실행)
                 content = """
-                        {"setting":"누리의 풍경화 숙제가 몇 시간째 끝나지 않는다",
-                         "기":"**문제 제기**: 누리가 좌절해 박사님을 찾아간다 '도와주세요!'","승":"2쪽: 박사님이 %s 방법을 알려 준다",
-                         "전":"실험 결과에 누리가 놀란다","결":"누리가 숙제를 끝내고 한계도 배운다",
-                         "ending":"누리가 그림을 완성하고 과학의 힘을 깨닫는다"}""".formatted(attempt == 1 ? "Kernel Filtering 데이터 코믹스 흥미(학습 몰입도)" : "")
+                        {"setting":"콩이의 풍경화 숙제가 몇 시간째 끝나지 않는다",
+                         "기":"**문제 제기**: 콩이가 좌절해 냥박사님을 찾아간다 '도와주세요!'","승":"2쪽: 냥박사님이 %s 방법을 알려 준다",
+                         "전":"실험 결과에 콩이가 놀란다","결":"콩이가 숙제를 끝내고 한계도 배운다",
+                         "ending":"콩이가 그림을 완성하고 과학의 힘을 깨닫는다"}""".formatted(attempt == 1 ? "Kernel Filtering 데이터 코믹스 흥미(학습 몰입도)" : "")
                         .replace("  ", " ");
+            } else if (properties.containsKey("panels")) {
+                String factList = prompt.substring(prompt.indexOf("전할 사실:"), prompt.indexOf("규칙:"));
+                int count = (int) factList.lines().filter(line -> line.matches("^\\d+\\. .*")).count();
+                List<String> items = new ArrayList<>();
+                for (int k = 1; k <= count; k++) {
+                    int fact = brokenBoard ? 1 : reverseBoard ? count - k + 1 : k;
+                    items.add("{\"fact\":%d,\"plan\":\"앞 컷에 이어 콩이가 %d번째로 직접 해 본다\"}".formatted(fact, k));
+                }
+                content = "{\"panels\":[" + String.join(",", items) + "]}";
             } else if (properties.containsKey("opening")) {
                 content = """
-                        {"opening":{"scene":"누리의 방, 멈춘 컴퓨터 앞에서 누리가 한숨을 쉰다","lines":[{"speaker":"해설","text":"누리는 고민에 빠졌다."}]},
-                         "closing":{"scene":"박사님 연구실, 누리가 노트를 덮으며 활짝 웃는다","lines":[{"speaker":"누리","text":"다음이 궁금해요!"}]}}""";
+                        {"opening":{"scene":"콩이의 방, 멈춘 컴퓨터 앞에서 콩이가 한숨을 쉰다","lines":[{"speaker":"해설","text":"콩이는 고민에 빠졌다."}]},
+                         "closing":{"scene":"냥박사님 연구실, 콩이가 노트를 덮으며 활짝 웃는다","lines":[{"speaker":"콩이","text":"다음이 궁금해요!"}]}}""";
             } else {
                 Matcher matcher = FACT.matcher(prompt);
                 String fact = matcher.find() ? matcher.group(1) : "?";
                 if (attempt == 1) {
-                    // 첫 시도: 장면에 대사가 섞이고 박사님 존댓말 → 다시 쓰기
-                    content = "{\"scene\":\"연구실 칠판 앞, 박사님이 그림을 그린다. **박사님**:\",\"lines\":[{\"speaker\":\"박사님\",\"text\":\"이건 정말 중요해요.\"}]}";
+                    // 첫 시도: 장면에 대사가 섞이고 냥박사님 존댓말 → 다시 쓰기
+                    content = "{\"scene\":\"연구실 칠판 앞, 냥박사님이 그림을 그린다. **냥박사님**:\",\"lines\":[{\"speaker\":\"냥박사\",\"text\":\"이건 정말 중요해요.\"}]}";
                 } else if (attempt == 2 && prompt.contains(LIMITATION_RULE_START)) {
                     // 한계 컷의 두 번째 시도: 단점을 뒤집음 → 한 번 더 다시 쓰기
-                    content = "{\"scene\":\"연구실 창가, 누리가 고개를 갸웃한다\",\"lines\":[{\"speaker\":\"박사님\",\"text\":\"처음엔 느리지만 결국엔 훨씬 빨라.\"}]}";
+                    content = "{\"scene\":\"연구실 창가, 콩이가 고개를 갸웃한다\",\"lines\":[{\"speaker\":\"냥박사\",\"text\":\"처음엔 느리지만 결국엔 훨씬 빨라.\"}]}";
                 } else {
                     // 컷마다 장소와 행동을 바꿔 앞 컷과 다른 장면이 되게 한다
                     int n = requests.size();
                     content = """
                             {"scene":"%2$s, %3$s","lines":[
-                              {"speaker":"누리","text":"박사님, %1$s 왜 그래요?"},
-                              {"speaker":"박사님","text":"레고 조립이랑 비슷해. (해설: 레고는 블록 장난감이다.)"}]}"""
-                            .formatted(fact, PLACES[n % PLACES.length], ACTIONS[n % ACTIONS.length]);
+                              {"speaker":"콩이","text":"%4$s"},
+                              {"speaker":"냥박사","text":"레고 조립이랑 비슷해. (해설: 레고는 블록 장난감이다.)"}]}"""
+                            .formatted(fact, PLACES[n % PLACES.length], ACTIONS[n % ACTIONS.length],
+                                    alwaysAsk ? "냥박사님, " + fact + " 왜 그래요?" : "와, " + fact + " 신기해요!");
                 }
             }
             return new ChatResult(content, OllamaServer.PRIMARY, 100, 50, 10);
@@ -126,7 +139,7 @@ class ComicWriterTest {
         assertThat(factPanel.evidence()).containsExactly(1);
         assertThat(factPanel.lines()).contains(new LineRules.Line("해설", "레고는 블록 장난감이다."));  // 괄호 해설은 따로 뺀다
         assertThat(factPanel.problems()).isEmpty();  // 존댓말과 장면에 섞인 대사는 다시 쓰기에서 고쳐졌다
-        assertThat(factPanel.scene()).doesNotContain("*", "박사님:");
+        assertThat(factPanel.scene()).doesNotContain("*", "냥박사님:");
     }
 
     @Test
@@ -136,9 +149,9 @@ class ComicWriterTest {
         });
 
         assertThat(comic.pages()).extracting(WrittenComic.Page::beat).containsExactly(
-                "누리가 좌절해 박사님을 찾아간다 도와주세요!", "박사님이 방법을 알려 준다",
-                "실험 결과에 누리가 놀란다", "누리가 숙제를 끝내고 한계도 배운다");
-        assertThat(comic.setting()).isEqualTo("누리의 풍경화 숙제가 몇 시간째 끝나지 않는다");
+                "콩이가 좌절해 냥박사님을 찾아간다 도와주세요!", "냥박사님이 방법을 알려 준다",
+                "실험 결과에 콩이가 놀란다", "콩이가 숙제를 끝내고 한계도 배운다");
+        assertThat(comic.setting()).isEqualTo("콩이의 풍경화 숙제가 몇 시간째 끝나지 않는다");
         // 기호와 이름표는 먼저 다시 쓰게 하고(가짜 AI는 같은 답을 내서), 그래도 남으면 코드가 지운다
         assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
                 .anyMatch(content -> content.contains("이야기 뼈대에 서식 기호"));
@@ -157,7 +170,7 @@ class ComicWriterTest {
     }
 
     @Test
-    void 사실_컷_요청에는_사실이_하나뿐이고_앞_컷은_대사_없이_장면만_넘긴다() {
+    void 사실_컷_요청에는_사실이_하나뿐이고_앞_컷의_장면과_줄거리와_바로_앞_대사를_넘긴다() {
         FakeAi ai = new FakeAi();
         writer(ai).write(plan(), sentences(), (done, total) -> {
         });
@@ -166,7 +179,8 @@ class ComicWriterTest {
                 .map(messages -> messages.get(1).content()).filter(prompt -> prompt.contains("이 컷이 전할 사실:")).toList();
         assertThat(factPrompts).hasSize(8);
         assertThat(factPrompts.get(1)).contains("이 컷이 전할 사실: 사실 2번 내용이다.").doesNotContain("사실 1번 내용이다.")
-                .contains("바로 앞 컷의 장면:").doesNotContain("레고 조립이랑")
+                .contains("바로 앞 컷의 장면:").contains("이 컷의 줄거리: 앞 컷에 이어 콩이가 2번째로 직접 해 본다")
+                .contains("바로 앞 대사: 냥박사: 레고 조립이랑 비슷해.")
                 .contains("쓰지 않는다. 영어 용어는");   // 텍스트 블록이 줄 끝 공백을 지워도 규칙 사이가 띄어져 있어야 한다
     }
 
@@ -202,19 +216,55 @@ class ComicWriterTest {
     }
 
     @Test
-    void 진행률은_시작_때_0을_알리고_이야기_1번_사실_컷_8번_연출_4번으로_모두_13단계다() {
+    void 진행률은_시작_때_0을_알리고_이야기_1번_콘티_4번_사실_컷_8번_연출_4번으로_모두_17단계다() {
         List<String> progress = new ArrayList<>();
         writer(new FakeAi()).write(plan(), sentences(), (done, total) -> progress.add(done + "/" + total));
 
-        assertThat(progress).hasSize(14).first().isEqualTo("0/13");
-        assertThat(progress).last().isEqualTo("13/13");
+        assertThat(progress).hasSize(18).first().isEqualTo("0/17");
+        assertThat(progress).last().isEqualTo("17/17");
+    }
+
+    @Test
+    void 사실_컷은_콘티가_정한_순서대로_놓이고_콘티_요청에는_그_쪽의_사실이_번호와_함께_들어간다() {
+        FakeAi ai = new FakeAi();
+        ai.reverseBoard = true;
+        WrittenComic comic = writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        List<WrittenComic.Panel> firstPage = comic.pages().getFirst().panels();
+        assertThat(firstPage.get(1).fact()).isEqualTo("사실 2번 내용이다.");
+        assertThat(firstPage.get(1).evidence()).as("근거는 사실을 따라간다").containsExactly(2);
+        assertThat(firstPage.get(2).fact()).isEqualTo("사실 1번 내용이다.");
+        assertThat(ai.requests.stream().map(messages -> messages.get(1).content()).filter(prompt -> prompt.contains("콘티를 짜라")).findFirst())
+                .get().asString().contains("전할 사실:\n1. 사실 1번 내용이다.\n2. 사실 2번 내용이다.");
+    }
+
+    @Test
+    void 콘티가_사실을_빠뜨리거나_겹치면_다시_묻고_끝까지_틀리면_원래_순서로_쓴다() {
+        FakeAi ai = new FakeAi();
+        ai.brokenBoard = true;
+        WrittenComic comic = writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() == 4).map(messages -> messages.get(3).content()))
+                .anyMatch(content -> content.contains("2번 사실이 콘티에 없다") && content.contains("1번 사실을 2번 넣었다"));
+        assertThat(comic.pages().getFirst().panels()).extracting(WrittenComic.Panel::fact)
+                .containsExactly(null, "사실 1번 내용이다.", "사실 2번 내용이다.", null);
+    }
+
+    @Test
+    void 앞_컷과_같은_모양의_질문으로_시작하면_다시_쓰게_한다() {
+        FakeAi ai = new FakeAi();
+        ai.alwaysAsk = true;
+        writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() >= 4).map(messages -> messages.getLast().content()))
+                .anyMatch(content -> content.contains("앞 컷도 '냥박사님, …?' 질문으로 시작했다"));
     }
 
     @Test
     void 대본_지시문에는_첫_논문의_소재가_예시로_남아_있지_않다() {
         // 두 번째 논문(176번)의 이야기에 예시 '숙제로 고화질 그림을…'이 '고화질 데이터 시각화 만화'로 새어 나왔다
         assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE, WritePrompts.CHARACTERS, WritePrompts.STYLE_EXAMPLE,
-                WritePrompts.STORY, WritePrompts.LIMITATION_RULE, WritePrompts.FACT_PANEL, WritePrompts.STAGING))
+                WritePrompts.STORY, WritePrompts.STORYBOARD, WritePrompts.LIMITATION_RULE, WritePrompts.FACT_PANEL, WritePrompts.STAGING))
                 .noneMatch(prompt -> prompt.contains("잠재") || prompt.contains("확산") || prompt.contains("GAN") || prompt.contains("고화질"));
         assertThat(Stream.of(WritePrompts.TITLE_RULE, WritePrompts.TERM_RULE))
                 .as("예시 낱말은 무엇이든 새어 나온다 (178번 '표본 크기(sample size)')").noneMatch(prompt -> prompt.contains("예:"));
@@ -236,6 +286,6 @@ class ComicWriterTest {
 
     @Test
     void 이야기_흐름에서_인용_표시와_수식_기호를_지운다() {
-        assertThat(ComicWriter.beat(">누리는 다운샘플링 계수 $f$를 바꿔 본다")).isEqualTo("누리는 다운샘플링 계수 f를 바꿔 본다");
+        assertThat(ComicWriter.beat(">콩이는 다운샘플링 계수 $f$를 바꿔 본다")).isEqualTo("콩이는 다운샘플링 계수 f를 바꿔 본다");
     }
 }

@@ -14,7 +14,7 @@ public final class JsonSchemas {
         return Map.of("type", "string");
     }
 
-    /** 정해진 값 중 하나만 쓸 수 있는 글자. 예: 화자는 누리·박사님·해설 중 하나. */
+    /** 정해진 값 중 하나만 쓸 수 있는 글자. 예: 화자는 콩이·냥박사·해설 중 하나. */
     public static Map<String, Object> stringEnum(List<String> values) {
         return Map.of("type", "string", "enum", values);
     }

@@ -43,11 +43,11 @@ class ComicRepositoryTest {
         PaperSentence slower = paperSentenceRepository.save(new PaperSentence(job, 239, "Limitations", 9,
                 "their sequential sampling process is still slower than that of GANs."));
 
-        Comic comic = new Comic(job, "잠재 공간에서의 고해상도 이미지 생성", "누리의 풍경화 숙제가 끝나지 않는다", "누리가 그림을 완성한다");
+        Comic comic = new Comic(job, "잠재 공간에서의 고해상도 이미지 생성", "콩이의 풍경화 숙제가 끝나지 않는다", "콩이가 그림을 완성한다");
         ComicPage page = comic.addPage(4, "결", "한계를 알고 숙제를 마무리한다");
-        ComicPanel staging = page.addPanel("누리가 노트를 펼친다", true, null);
-        staging.addLine(Speaker.NURI, "박사님, 단점은 없어요?");
-        ComicPanel factPanel = page.addPanel("박사님이 시계를 가리킨다", false, "잠재 확산 모델은 GAN보다 샘플링이 느리다.");
+        ComicPanel staging = page.addPanel("콩이가 노트를 펼친다", true, null);
+        staging.addLine(Speaker.NURI, "냥박사님, 단점은 없어요?");
+        ComicPanel factPanel = page.addPanel("냥박사님이 시계를 가리킨다", false, "잠재 확산 모델은 GAN보다 샘플링이 느리다.");
         factPanel.addLine(Speaker.DOCTOR, "한 장씩 차근차근 그리느라 조금 느려.");
         factPanel.addLine(Speaker.NARRATION, "잠재 확산 모델은 GAN보다 샘플링이 느리다.");
         factPanel.addEvidence(slower);
