@@ -103,4 +103,3 @@ curl http://127.0.0.1:8080/api/papers/1/comic                 # 완성된 만화
 - [docs/plan.md](docs/plan.md): 계획, 결정 이유, 진행 기록, 알려진 문제와 다음 계획
 - [docs/troubleshooting.md](docs/troubleshooting.md): 겪은 오류와 해결 기록 60건
 
-AI 코딩 도우미(Claude Code)와 함께 개발했습니다. 설계 결정, 실서버 확인, 커밋 승인은 직접 했습니다.
