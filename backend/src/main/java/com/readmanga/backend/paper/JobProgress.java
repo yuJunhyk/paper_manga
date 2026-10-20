@@ -38,9 +38,10 @@ public class JobProgress {
         return find(jobId).isCancelled();
     }
 
+    /** 설계도 저장과 대본 쓰기 단계 표시를 한 트랜잭션으로 묶는다 (설계도 없이 '대본 쓰기'가 되지 않게). */
     @Transactional
-    public void moveTo(Long jobId, JobStage stage, int total) {
-        find(jobId).moveTo(stage, total);
+    public void finishPlanning(Long jobId, String planJson) {
+        find(jobId).finishPlanning(planJson);
     }
 
     @Transactional

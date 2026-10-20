@@ -62,7 +62,8 @@ public class PaperService {
     }
 
     /**
-     * 다시 시도. 실패·취소된 작업을 저장된 문장으로 핵심 사실 추출부터 다시 돌린다.
+     * 다시 시도. 실패·취소된 작업을 저장된 결과로 멈춘 곳부터 다시 돌린다.
+     * 설계도가 저장돼 있으면(대본 쓰기에서 멈춤) 대본 쓰기부터, 아니면 저장된 문장으로 핵심 사실 추출부터.
      * 논문 분석 전에 실패해 문장이 없으면 PDF를 다시 올려야 한다(409).
      * 트랜잭션으로 묶지 않는다: 상태 변경을 먼저 커밋해야 비동기 처리가 바뀐 상태를 읽는다.
      */
@@ -72,7 +73,8 @@ public class PaperService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "논문 분석 전에 멈춘 작업이라 저장된 문장이 없습니다. PDF를 다시 올려 주세요.");
         }
         requireQueueRoom();
-        int changed = paperJobRepository.resetForRetry(id, JobStatus.PENDING, JobStage.PLANNING,
+        JobStage from = job.hasPlan() ? JobStage.WRITING : JobStage.PLANNING;
+        int changed = paperJobRepository.resetForRetry(id, JobStatus.PENDING, from,
                 List.of(JobStatus.FAILED, JobStatus.CANCELLED), LocalDateTime.now());
         if (changed == 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "실패했거나 취소된 작업만 다시 시도할 수 있습니다. 상태: " + job.getStatus());

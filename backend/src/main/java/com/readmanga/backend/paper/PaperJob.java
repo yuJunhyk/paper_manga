@@ -61,6 +61,10 @@ public class PaperJob {
     @Column(length = ERROR_MESSAGE_MAX_LENGTH)
     private String errorMessage;
 
+    /** 핵심 사실 추출 결과(만화 설계도, ComicPlan의 JSON). 대본 쓰기에서 멈춘 작업은 다시 시도할 때 이것으로 대본 쓰기부터 한다 */
+    @Column(columnDefinition = "text")
+    private String planJson;
+
     protected PaperJob() {
     }
 
@@ -76,12 +80,22 @@ public class PaperJob {
         moveTo(JobStage.EXTRACTING, 0);
     }
 
-    /** 다시 시도: 저장된 결과를 살려 stage 단계부터 다시 처리한다. */
+    /** 다시 시도: 저장된 결과를 살려 stage 단계부터 다시 처리한다. 핵심 사실 추출부터 하면 예전 설계도는 버린다. */
     public void resume(JobStage stage) {
         ensureNotCancelled();
         this.status = JobStatus.PROCESSING;
         this.errorMessage = null;
+        if (stage == JobStage.PLANNING) {
+            this.planJson = null;
+        }
         moveTo(stage, 0);
+    }
+
+    /** 핵심 사실 추출이 끝났다: 설계도를 저장하고 대본 쓰기로 넘어간다. */
+    public void finishPlanning(String planJson) {
+        ensureNotCancelled();
+        this.planJson = planJson;
+        moveTo(JobStage.WRITING, 0);
     }
 
     /** 다음 단계로 넘어간다. total은 그 단계의 전체 작업 수 (모르면 0). */
@@ -182,5 +196,13 @@ public class PaperJob {
 
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    public String getPlanJson() {
+        return planJson;
+    }
+
+    public boolean hasPlan() {
+        return planJson != null;
     }
 }

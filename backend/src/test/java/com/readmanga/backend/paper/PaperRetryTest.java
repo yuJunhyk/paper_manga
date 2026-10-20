@@ -40,7 +40,7 @@ class PaperRetryTest {
     @MockitoBean
     PaperJobProcessor paperJobProcessor;
 
-    /** 논문 문장은 저장된 채로 대본 쓰기 중에 실패한 작업 */
+    /** 논문 문장은 저장된 채로 대본 쓰기 중에 실패한 작업 (설계도 칸을 만들기 전에 실패해 설계도는 없다) */
     private Long failedJobWithSentences() {
         PaperJob job = new PaperJob("failed.pdf");
         job.start();
@@ -75,6 +75,34 @@ class PaperRetryTest {
         assertThat(job.getStatus()).isEqualTo(JobStatus.PROCESSING);
         assertThat(job.getStage()).isEqualTo(JobStage.PLANNING);
         assertThat(job.getProgressDone()).isZero();
+    }
+
+    @Test
+    void 설계도가_저장된_작업은_대본_쓰기부터_다시_접수된다() {
+        PaperJob job = new PaperJob("writing.pdf");
+        job.start();
+        job.finishPlanning("{\"comicTitle\": \"주의 집중!\"}");
+        job.fail("주 서버와 예비 서버가 모두 응답하지 않습니다");
+        paperJobRepository.save(job);
+        paperSentenceRepository.save(new PaperSentence(job, 1, "Introduction", 1, "Text."));
+
+        JobResponse response = paperService.retry(job.getId());
+
+        assertThat(response.stage()).isEqualTo(JobStage.WRITING.getLabel());
+        verify(paperJobProcessor).retry(job.getId());
+    }
+
+    @Test
+    void 핵심_사실_추출부터_다시_하면_예전_설계도를_버린다() {
+        PaperJob job = new PaperJob("replan.pdf");
+        job.start();
+        job.finishPlanning("{\"comicTitle\": \"주의 집중!\"}");
+        job.fail("저장된 설계도를 읽지 못함");
+        paperJobRepository.save(job);
+
+        jobProgress.resume(job.getId(), JobStage.PLANNING);
+
+        assertThat(paperJobRepository.findById(job.getId()).orElseThrow().hasPlan()).isFalse();
     }
 
     @Test
