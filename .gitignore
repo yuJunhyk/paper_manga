@@ -11,7 +11,10 @@ __pycache__/
 # 논문 원문 추출물: PDF와 같은 이유(저작권)로 올리지 않는다. GROBID·PDFBox로 다시 만들 수 있다
 spikes/pdfbox-spike/*.txt
 spikes/grobid-spike/*.xml
-results/*grobid-api*
+
+# 실행 결과: 근거로 쓴 논문 원문 문장이 많이 들어 있어 올리지 않는다(이 컴퓨터에만 보관). 개선 내용은 docs/에 적는다
+results/
+spikes/llm-spike/results/
 
 # 서버 로그 파일
 logs/
