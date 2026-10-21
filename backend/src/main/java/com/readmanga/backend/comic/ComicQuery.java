@@ -25,8 +25,23 @@ public class ComicQuery {
 
     @Transactional(readOnly = true)
     public ComicResponse find(Long jobId) {
-        PaperJob job = paperJobRepository.findById(jobId)
+        return find(job(jobId));
+    }
+
+    /** 내보내기용 대본(Markdown). 파일 이름에 논문 제목을 쓰려고 작업도 함께 본다 */
+    @Transactional(readOnly = true)
+    public ComicScript script(Long jobId) {
+        PaperJob job = job(jobId);
+        return ComicScript.of(find(job), job.getTitle());
+    }
+
+    private PaperJob job(Long jobId) {
+        return paperJobRepository.findById(jobId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "작업을 찾을 수 없습니다: " + jobId));
+    }
+
+    private ComicResponse find(PaperJob job) {
+        Long jobId = job.getId();
         return comicRepository.findByJob_Id(jobId)
                 .map(comic -> ComicResponse.from(jobId, comic))
                 .orElseThrow(() -> isRunning(job)
