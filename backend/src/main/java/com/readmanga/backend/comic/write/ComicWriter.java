@@ -42,6 +42,7 @@ public class ComicWriter {
 
     static final int STORY_RETRIES = 1;
     static final int PANEL_RETRIES = 2;  // 컷은 요청 하나가 작아서 다시 쓰기를 2번까지 한다
+    static final double SIMILAR_QUESTION = 0.4;  // 같은 쪽 콘티의 궁금증끼리 이만큼 비슷하면 같은 질문으로 본다
 
     /** 이야기 뼈대에 섞인 서식 기호와 '1쪽:' 이름표 (2차 실행에서 쪽별 흐름이 모두 '**문제 제기**:'로 시작했다) */
     private static final Pattern STORY_MARKUP = Pattern.compile("[*#`{}]|(^|\\s)\\d+\\s*쪽\\s*[:：]");
@@ -49,7 +50,7 @@ public class ComicWriter {
     private static final Pattern BEAT_LABEL = Pattern.compile("^(\\d+\\s*쪽\\s*[:：]\\s*)?([가-힣A-Za-z· ]{1,8}[:：]\\s*)?");
 
     private static final List<String> FACT_SPEAKERS = List.of(Speaker.NURI.getLabel(), Speaker.DOCTOR.getLabel());  // 해설은 코드가 넣는다
-    private static final List<String> STAGING_SPEAKERS = List.of(Speaker.NURI.getLabel(), Speaker.DOCTOR.getLabel(), Speaker.NARRATION.getLabel());
+    private static final List<String> STAGING_SPEAKERS = List.of(Speaker.NURI.getLabel(), Speaker.DOCTOR.getLabel());  // 연출 컷은 해설 없이 (감상 해설만 채워졌다)
 
     private final AiAsker aiAsker;
     private final OllamaProperties properties;
@@ -78,18 +79,23 @@ public class ComicWriter {
     record StoryboardAnswer(List<StoryboardItem> panels) {
     }
 
-    record StoryboardItem(int fact, String plan) {
+    record StoryboardItem(int fact, String plan, String question) {
     }
 
-    /** 콘티 한 칸: 이 컷이 전할 사실과 그 컷의 줄거리 */
-    record Board(ComicPlan.FactPlan fact, String plan) {
+    /** 연출 컷: 첫 쪽 여는 컷과 끝 쪽 닫는 컷 (쓰지 않는 쪽은 null) */
+    record Staging(WrittenComic.Panel opening, WrittenComic.Panel closing) {
+    }
+
+    /** 콘티 한 칸: 이 컷이 전할 사실, 그 컷의 줄거리, 이 컷 뒤에 콩이가 궁금해할 것(다음 컷이 답한다) */
+    record Board(ComicPlan.FactPlan fact, String plan, String question) {
     }
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     public WrittenComic write(ComicPlan plan, Map<Integer, PaperSentence> sentencesByNumber, ProgressListener listener) {
         long started = System.currentTimeMillis();
         Set<String> servers = new LinkedHashSet<>();
-        int totalSteps = 1 + plan.pages().stream().mapToInt(page -> page.facts().size() + 2).sum();  // 이야기 뼈대 + 쪽마다 (콘티 + 사실 컷들 + 연출 컷)
+        int stagingSteps = plan.pages().size() == 1 ? 1 : 2;  // 연출 컷은 첫 쪽과 끝 쪽에만 (한 쪽짜리면 한 번에)
+        int totalSteps = 1 + stagingSteps + plan.pages().stream().mapToInt(page -> page.facts().size() + 1).sum();  // 이야기 뼈대 + 연출 컷 + 쪽마다 (콘티 + 사실 컷들)
         int doneSteps = 0;
         listener.update(0, totalSteps);  // 시작하자마자 0/전체를 보여 준다 (0/0이면 멈춤과 대기를 구분할 수 없다)
         String model = properties.dialogueModel();
@@ -112,6 +118,7 @@ public class ComicWriter {
         // ②③④ 쪽마다 콘티, 사실 컷(콘티 순서), 연출 컷
         List<WrittenComic.Page> pages = new ArrayList<>();
         String previousScene = null;               // 앞 쪽 마지막 컷의 장면
+        String previousQuestion = "";              // 앞 컷이 남긴 궁금증 (쪽이 바뀌어도 이어진다)
         List<LineRules.Line> previousLines = List.of();  // 앞 쪽 마지막 컷의 인물 대사
         for (ComicPlan.PagePlan page : plan.pages()) {
             String beat = beat(storyValue.get(page.role()));
@@ -123,27 +130,38 @@ public class ComicWriter {
             for (Board item : board) {
                 String sceneBefore = factPanels.isEmpty() ? previousScene : factPanels.getLast().scene();
                 List<LineRules.Line> linesBefore = factPanels.isEmpty() ? previousLines : spoken(factPanels.getLast().lines());
-                WrittenComic.Panel panel = writeFactPanel(model, plan, page, setting, beat, sceneBefore, item, linesBefore,
-                        sentencesByNumber, seenLines, paperWords, servers);
+                List<LineRules.Line> pageLines = factPanels.stream().flatMap(panel -> spoken(panel.lines()).stream()).toList();
+                WrittenComic.Panel panel = writeFactPanel(model, plan, page, setting, beat, sceneBefore, item, previousQuestion, linesBefore,
+                        pageLines, sentencesByNumber, seenLines, paperWords, servers);
                 factPanels.add(panel);
+                previousQuestion = item.question();
                 listener.update(++doneSteps, totalSteps);
             }
 
-            String lastFactScene = factPanels.isEmpty() ? previousScene : factPanels.getLast().scene();
-            List<LineRules.Line> lastFactLines = factPanels.isEmpty() ? previousLines : spoken(factPanels.getLast().lines());
-            String around = previousPage + firstFactPanel(factPanels);
-            List<WrittenComic.Panel> staging = writeStagingPanels(model, plan, page, setting, beat, ending, previousScene, previousLines,
-                    around, factPanels.isEmpty() ? null : factPanels.getFirst(), lastFactScene, lastFactLines, seenLines, paperWords, servers);
-            listener.update(++doneSteps, totalSteps);
+            // 연출 컷은 첫 쪽 여는 컷과 끝 쪽 닫는 컷만 (가운데 쪽은 사실 컷만, 앞 쪽 마지막 사실 컷에서 이어진다)
+            boolean opening = page.pageNumber() == 1;
+            boolean closing = page.pageNumber() == plan.pages().size();
+            Staging staging = opening || closing
+                    ? writeStagingPanels(model, plan, page, setting, beat, ending, opening, closing, factPanels, seenLines, paperWords, servers)
+                    : new Staging(null, null);
+            if (opening || closing) {
+                listener.update(++doneSteps, totalSteps);
+            }
 
             List<WrittenComic.Panel> panels = new ArrayList<>();
-            panels.add(staging.getFirst());
+            if (staging.opening() != null) {
+                panels.add(staging.opening());
+            }
             panels.addAll(factPanels);
-            panels.add(staging.getLast());
+            if (staging.closing() != null) {
+                panels.add(staging.closing());
+            }
             pages.add(new WrittenComic.Page(page.pageNumber(), page.role(), beat, panels));
-            previousScene = staging.getLast().scene();
-            List<LineRules.Line> closingLines = spoken(staging.getLast().lines());
-            previousLines = closingLines.isEmpty() && !factPanels.isEmpty() ? spoken(factPanels.getLast().lines()) : closingLines;
+            if (!panels.isEmpty()) {
+                previousScene = panels.getLast().scene();
+                List<LineRules.Line> lastLines = spoken(panels.getLast().lines());
+                previousLines = lastLines.isEmpty() && !factPanels.isEmpty() ? spoken(factPanels.getLast().lines()) : lastLines;
+            }
             log.info("{}쪽({}) 대본 완료: 컷 {}개", page.pageNumber(), page.role(), panels.size());
         }
 
@@ -159,7 +177,7 @@ public class ComicWriter {
     private List<Board> storyboard(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting, String beat,
                                    String previousPage, Set<String> paperWords, Set<String> servers) {
         List<ComicPlan.FactPlan> facts = page.facts();
-        List<Board> original = facts.stream().map(fact -> new Board(fact, "")).toList();
+        List<Board> original = facts.stream().map(fact -> new Board(fact, "", "")).toList();
         if (facts.size() < 2) {
             return original;
         }
@@ -170,7 +188,8 @@ public class ComicWriter {
         String prompt = WritePrompts.STORYBOARD.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
                 previousPage, facts.size(), list.toString().trim());
         Map<String, Object> schema = JsonSchemas.object("panels", JsonSchemas.array(
-                JsonSchemas.object("fact", JsonSchemas.integer(), "plan", JsonSchemas.string()), facts.size(), facts.size()));
+                JsonSchemas.object("fact", JsonSchemas.integer(), "plan", JsonSchemas.string(), "question", JsonSchemas.string()),
+                facts.size(), facts.size()));
         AiAsker.Answer<StoryboardAnswer> answer;
         try {
             answer = aiAsker.ask(model, WritePrompts.STORY_SYSTEM + plan.termGuide(), prompt, schema, StoryboardAnswer.class,
@@ -185,7 +204,7 @@ public class ComicWriter {
             return original;
         }
         return answer.value().panels().stream()
-                .map(item -> new Board(facts.get(item.fact() - 1), oneLine(item.plan())))
+                .map(item -> new Board(facts.get(item.fact() - 1), oneLine(item.plan()), oneLine(item.question())))
                 .toList();
     }
 
@@ -209,9 +228,33 @@ public class ComicWriter {
         if (answer.panels().stream().anyMatch(item -> item.plan() == null || item.plan().isBlank())) {
             problems.add("plan이 비어 있는 컷이 있다. 컷마다 일어나는 일을 한 문장으로 쓴다.");
         }
+        problems.addAll(questionProblems(answer.panels().stream().map(StoryboardItem::question).toList()));
         problems.addAll(mixedScriptProblems("콘티", plans));
         problems.addAll(unknownTermProblems("콘티", plans, paperWords));
         problems.addAll(TextRules.termVariantProblems("콘티", plans, terms));
+        return problems;
+    }
+
+    /**
+     * 콘티의 궁금증 검사: 비었거나, 같은 쪽 안에서 거의 같은 궁금증이 되풀이되면 다시 짜게 한다.
+     * 198번 4쪽: "이렇게 좋은 그림을 만들려면, 이 과정 자체가 굉장히 오래 걸리는 건가요?" 다음 컷이
+     * "이렇게 멋진 결과물이 나오는데도, 혹시 시간이 오래 걸리는 건가요?"로 같은 질문을 다시 했다.
+     */
+    static List<String> questionProblems(List<String> questions) {
+        List<String> problems = new ArrayList<>();
+        if (questions.stream().anyMatch(question -> question == null || question.isBlank())) {
+            problems.add("question이 비어 있는 컷이 있다. 컷마다 콩이가 다음에 궁금해할 것을 짧은 질문 하나로 쓴다.");
+        }
+        for (int i = 0; i < questions.size(); i++) {
+            for (int j = i + 1; j < questions.size(); j++) {
+                String first = String.valueOf(questions.get(i));
+                String second = String.valueOf(questions.get(j));
+                if (TextRules.similarity(first, second) >= SIMILAR_QUESTION) {
+                    problems.add("%d번째 컷과 %d번째 컷의 question이 거의 같다: \"%s\" / \"%s\". 컷마다 다른 궁금증을 쓴다."
+                            .formatted(i + 1, j + 1, first, second));
+                }
+            }
+        }
         return problems;
     }
 
@@ -240,6 +283,16 @@ public class ComicWriter {
                 + (lines.isEmpty() ? "" : "이번 쪽 첫 사실 컷의 첫 대사: " + say(lines.getFirst()) + "\n");
     }
 
+    /** 이번 쪽 마지막 사실 컷의 장면과 마지막 대사 (닫는 컷이 그 뒤를 잇는다) */
+    private static String lastFactPanel(WrittenComic.Panel last) {
+        if (last == null) {
+            return "";
+        }
+        List<LineRules.Line> lines = spoken(last.lines());
+        return "\n이번 쪽 마지막 사실 컷의 장면: " + last.scene() + "\n"
+                + (lines.isEmpty() ? "" : "이번 쪽 마지막 사실 컷의 마지막 대사: " + say(lines.getLast()) + "\n");
+    }
+
     private static String say(LineRules.Line line) {
         return line.speaker() + ": " + line.text();
     }
@@ -252,8 +305,8 @@ public class ComicWriter {
     // ---------- ③ 사실 컷 ----------
 
     private WrittenComic.Panel writeFactPanel(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting, String beat,
-                                              String sceneBefore, Board item, List<LineRules.Line> linesBefore,
-                                              Map<Integer, PaperSentence> sentencesByNumber, Set<String> seenLines,
+                                              String sceneBefore, Board item, String questionBefore, List<LineRules.Line> linesBefore,
+                                              List<LineRules.Line> pageLines, Map<Integer, PaperSentence> sentencesByNumber, Set<String> seenLines,
                                               Set<String> paperWords, Set<String> servers) {
         ComicPlan.FactPlan fact = item.fact();
         String quotes = fact.evidence().stream()
@@ -269,6 +322,9 @@ public class ComicWriter {
         if (!item.plan().isBlank()) {
             context.append("이 컷의 줄거리: ").append(item.plan()).append('\n');
         }
+        if (questionBefore != null && !questionBefore.isBlank()) {
+            context.append("앞 컷이 남긴 궁금증: ").append(questionBefore).append('\n');
+        }
         if (!linesBefore.isEmpty()) {
             LineRules.Line last = linesBefore.getLast();
             context.append("바로 앞 대사: ").append(say(last)).append('\n');
@@ -277,7 +333,7 @@ public class ComicWriter {
         Map<PanelAnswer, Set<Integer>> wrongLines = new IdentityHashMap<>();  // 시도마다 사실과 맞지 않은 대사 번호
         String prompt = WritePrompts.FACT_PANEL.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
                 context.toString(), fact.fact(), quotes, limitation ? WritePrompts.LIMITATION_RULE : "");
-        AiAsker.Answer<PanelAnswer> answer = aiAsker.ask(model, WritePrompts.PANEL_SYSTEM + plan.termGuide(), prompt, panelSchema(FACT_SPEAKERS, 2),
+        AiAsker.Answer<PanelAnswer> answer = aiAsker.ask(model, WritePrompts.PANEL_SYSTEM + plan.termGuide(), prompt, panelSchema(FACT_SPEAKERS, 4),
                 PanelAnswer.class, value -> {
                     List<String> problems = new ArrayList<>(LineRules.problems(value.scene(), lines(value), seenLines, sceneBefore));
                     if (limitation) {
@@ -288,13 +344,24 @@ public class ComicWriter {
                     problems.addAll(TextRules.termVariantProblems("사실 컷", text, plan.terms()));
                     problems.addAll(LineRules.repeatedQuestionProblems(lines(value), previousWasQuestion));
                     problems.addAll(LineRules.previousLineProblems(spoken(lines(value)), linesBefore));
+                    problems.addAll(LineRules.earlierLineProblems(spoken(lines(value)), pageLines));
+                    problems.addAll(LineRules.unansweredProblems(LineRules.tidy(lines(value))));
+                    problems.addAll(LineRules.studentOnlyAsksProblems(LineRules.tidy(lines(value))));
+                    problems.addAll(LineRules.authorVoiceProblems(LineRules.tidy(lines(value))));
+                    problems.addAll(LineRules.doctorContentProblems(fact.fact(), LineRules.tidy(lines(value)), plan.terms()));
                     problems.addAll(lineProblems(plan, fact, quotes, value, wrongLines, servers));
                     return problems;
                 }, PANEL_RETRIES);
         answer.attempts().forEach(attempt -> servers.add(attempt.server()));
 
-        List<LineRules.Line> lines = new ArrayList<>(withoutWrongLines(LineRules.tidy(lines(answer.value())),
-                wrongLines.getOrDefault(answer.value(), Set.of()), page.pageNumber()));
+        List<LineRules.Line> kept = LineRules.withoutRepeats(withoutWrongLines(LineRules.tidy(lines(answer.value())),
+                wrongLines.getOrDefault(answer.value(), Set.of()), page.pageNumber()), linesBefore);
+        List<LineRules.Line> onFact = LineRules.withoutOffFactDoctorLines(kept, fact.fact(), plan.terms());
+        if (onFact.size() < kept.size()) {
+            log.info("{}쪽 사실 컷에서 사실의 숫자·용어가 없는 냥박사 대사를 뺐습니다: {}", page.pageNumber(), fact.fact());
+        }
+        List<LineRules.Line> lines = new ArrayList<>(LineRules.withoutUnansweredQuestions(
+                LineRules.withoutInnerRepeats(LineRules.withoutAuthorVoice(onFact))));
         lines.add(new LineRules.Line("해설", fact.fact()));  // 해설은 검증된 사실 그대로
         lines.forEach(line -> seenLines.add(line.text()));
         return new WrittenComic.Panel(LineRules.tidyScene(answer.value().scene()), false, fact.fact(), lines, fact.evidence(),
@@ -341,7 +408,11 @@ public class ComicWriter {
             wrong.add(index);
             problems.add("%d번 대사 \"%s\"는 사실과 %s: %s. 이 컷의 사실과 근거 원문에 맞게 고쳐 쓴다."
                     .formatted(index + 1, shorten(spoken.get(index).text(), 40),
-                            "어긋남".equals(result.verdict()) ? "어긋난다" : "원문에 없는 내용을 덧붙였다", result.reason()));
+                            switch (result.verdict()) {
+                                case "어긋남" -> "어긋난다";
+                                case "벗어남" -> "다른 내용이다(원문의 다른 부분을 말했다)";
+                                default -> "원문에 없는 내용을 덧붙였다";
+                            }, result.reason()));
         }
         wrongLines.put(value, wrong);
         return problems;
@@ -361,33 +432,52 @@ public class ComicWriter {
         return result;
     }
 
-    private List<WrittenComic.Panel> writeStagingPanels(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting,
-                                                        String beat, String ending, String previousScene,
-                                                        List<LineRules.Line> previousLines, String around, WrittenComic.Panel firstFact,
-                                                        String lastFactScene, List<LineRules.Line> lastFactLines, Set<String> seenLines,
-                                                        Set<String> paperWords, Set<String> servers) {
-        boolean firstPage = page.pageNumber() == 1;
-        boolean lastPage = page.pageNumber() == plan.pages().size();
-        String prompt = WritePrompts.STAGING.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
-                firstPage ? "첫 쪽이므로 opening에서 이야기 배경의 사건을 처음 보여 준다." : "",
-                around,
-                lastPage ? "이야기를 끝맺는다: " + ending : "이번 쪽 내용에 대한 %s의 감탄이나 다음 쪽에 대한 궁금증으로 마무리한다.".formatted(Speaker.NURI.getLabel()));
+    /** 첫 쪽 여는 컷(opening)과 끝 쪽 닫는 컷(closing) 중 필요한 것만 한 번에 쓴다. 사실 컷을 다 쓴 뒤에 써서 이웃한 사실 컷을 넘긴다. */
+    private Staging writeStagingPanels(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting, String beat, String ending,
+                                       boolean opening, boolean closing, List<WrittenComic.Panel> factPanels, Set<String> seenLines,
+                                       Set<String> paperWords, Set<String> servers) {
+        WrittenComic.Panel firstFact = factPanels.isEmpty() ? null : factPanels.getFirst();
+        WrittenComic.Panel lastFact = factPanels.isEmpty() ? null : factPanels.getLast();
+        StringBuilder around = new StringBuilder();
+        List<String> guides = new ArrayList<>();
+        List<Object> fields = new ArrayList<>();
         Map<String, Object> panel = panelSchema(STAGING_SPEAKERS, 3);
+        if (opening) {
+            around.append(firstFactPanel(factPanels));
+            guides.add(WritePrompts.STAGING_OPENING);
+            fields.addAll(List.of("opening", panel));
+        }
+        if (closing) {
+            around.append(lastFactPanel(lastFact));
+            guides.add(WritePrompts.STAGING_CLOSING.formatted(ending));
+            fields.addAll(List.of("closing", panel));
+        }
+        String prompt = WritePrompts.STAGING.formatted(page.pageNumber(), plan.pages().size(), page.role(), setting, beat,
+                around.toString().trim(), String.join("\n", guides));
         AiAsker.Answer<StagingAnswer> answer = aiAsker.ask(model, WritePrompts.PANEL_SYSTEM + plan.termGuide(), prompt,
-                JsonSchemas.object("opening", panel, "closing", panel), StagingAnswer.class,
+                JsonSchemas.object(fields.toArray()), StagingAnswer.class,
                 value -> {
-                    List<String> problems = new ArrayList<>(
-                            LineRules.problems(value.opening().scene(), lines(value.opening()), seenLines, previousScene));
-                    if (firstFact != null) {
-                        problems.addAll(LineRules.nextPanelProblems(value.opening().scene(), spoken(lines(value.opening())),
-                                firstFact.scene(), spoken(firstFact.lines())));
+                    List<String> problems = new ArrayList<>();
+                    if (opening && value.opening() == null || closing && value.closing() == null) {
+                        return List.of("opening·closing 중 써야 할 컷이 빠졌다.");
                     }
-                    // 여는 컷은 앞 쪽 마지막 대사를, 닫는 컷은 마지막 사실 컷 대사를 되풀이하지 않는다
-                    // (195번: 2쪽 여는 컷이 1쪽 7컷 "그럼 고화질로 만들려면 그만큼 시간이 오래 걸린다는 뜻인가요?"를 그대로 옮김)
-                    problems.addAll(LineRules.previousLineProblems(spoken(lines(value.opening())), previousLines));
-                    problems.addAll(LineRules.problems(value.closing().scene(), lines(value.closing()), seenLines, lastFactScene));
-                    problems.addAll(LineRules.previousLineProblems(spoken(lines(value.closing())), lastFactLines));
-                    String text = Stream.of(value.opening(), value.closing())
+                    if (opening) {
+                        problems.addAll(LineRules.problems(value.opening().scene(), lines(value.opening()), seenLines, null));
+                        if (firstFact != null) {
+                            problems.addAll(LineRules.nextPanelProblems(value.opening().scene(), spoken(lines(value.opening())),
+                                    firstFact.scene(), spoken(firstFact.lines())));
+                        }
+                    }
+                    if (closing) {
+                        // 닫는 컷은 마지막 사실 컷 장면·대사를 되풀이하지 않는다
+                        // (195번: 연출 컷이 앞 컷 대사 "그럼 고화질로 만들려면 그만큼 시간이 오래 걸린다는 뜻인가요?"를 그대로 옮김)
+                        problems.addAll(LineRules.problems(value.closing().scene(), lines(value.closing()), seenLines,
+                                lastFact == null ? null : lastFact.scene()));
+                        problems.addAll(LineRules.previousLineProblems(spoken(lines(value.closing())),
+                                lastFact == null ? List.of() : spoken(lastFact.lines())));
+                        problems.addAll(LineRules.unansweredProblems(LineRules.tidy(lines(value.closing()))));
+                    }
+                    String text = Stream.of(value.opening(), value.closing()).filter(java.util.Objects::nonNull)
                             .flatMap(answerPanel -> Stream.concat(Stream.of(answerPanel.scene()), answerPanel.lines().stream().map(LineAnswer::text)))
                             .collect(Collectors.joining(" "));
                     problems.addAll(unknownTermProblems("연출 컷", text, paperWords));
@@ -396,19 +486,23 @@ public class ComicWriter {
                 }, PANEL_RETRIES);
         answer.attempts().forEach(attempt -> servers.add(attempt.server()));
 
-        WrittenComic.Panel opening = new WrittenComic.Panel(LineRules.tidyScene(answer.value().opening().scene()), true, null,
-                LineRules.tidy(lines(answer.value().opening())), List.of(), answer.problems());
-        WrittenComic.Panel closing = new WrittenComic.Panel(LineRules.tidyScene(answer.value().closing().scene()), true, null,
-                LineRules.tidy(lines(answer.value().closing())), List.of(), List.of());
-        return List.of(opening, closing);
+        StagingAnswer value = answer.value();
+        WrittenComic.Panel openingPanel = !opening || value.opening() == null ? null : new WrittenComic.Panel(
+                LineRules.tidyScene(value.opening().scene()), true, null, LineRules.tidy(lines(value.opening())), List.of(), answer.problems());
+        WrittenComic.Panel closingPanel = !closing || value.closing() == null ? null : new WrittenComic.Panel(
+                LineRules.tidyScene(value.closing().scene()), true, null, LineRules.tidy(lines(value.closing())), List.of(),
+                opening ? List.of() : answer.problems());
+        return new Staging(openingPanel, closingPanel);
     }
 
     // ---------- 도우미 ----------
 
     private static String storyPrompt(ComicPlan plan) {
         String pages = plan.pages().stream()
+                // 다룰 내용은 그 쪽이 맡은 요약 문장(요약 단계 전 설계도는 조각 제목)
                 .map(page -> "%d쪽 (%s: %s) — %s".formatted(page.pageNumber(), page.role(), page.roleMeaning(),
-                        page.chunks().stream().map(ComicPlan.ChunkPlan::title).collect(Collectors.joining(", "))))
+                        page.points().isEmpty() ? page.chunks().stream().map(ComicPlan.ChunkPlan::title).collect(Collectors.joining(", "))
+                                : String.join(" / ", page.points())))
                 .collect(Collectors.joining("\n"));
         String roleKeys = plan.pages().stream().map(page -> "'" + page.role() + "'").collect(Collectors.joining(", "));
         return WritePrompts.STORY.formatted(plan.pages().size(), roleKeys, plan.comicTitle(), pages, WritePrompts.TERM_RULE);

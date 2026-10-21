@@ -1,5 +1,6 @@
 package com.readmanga.backend.comic.write;
 
+import com.readmanga.backend.comic.plan.ComicPlan;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -30,7 +31,8 @@ class LineRulesTest {
     @Test
     void 번호_표시_긴_대사_섞인_단어_짧은_장면을_잡는다() {
         assertThat(problemsOf("냥박사", "처리 시간이 [23]에서 보듯이 줄었어.")).anyMatch(p -> p.contains("번호 표시"));
-        assertThat(problemsOf("냥박사", "가".repeat(120))).anyMatch(p -> p.contains("너무 길다"));
+        assertThat(problemsOf("냥박사", "가".repeat(150))).anyMatch(p -> p.contains("너무 길다"));
+        assertThat(problemsOf("냥박사", "가".repeat(120))).as("한 대사 1~3문장은 된다").noneMatch(p -> p.contains("너무 길다"));
         assertThat(problemsOf("콩이", "마asking 영역이 뭐예요?")).anyMatch(p -> p.contains("섞여"));
         assertThat(LineRules.problems("0", List.of(new LineRules.Line("콩이", "와!")), Set.of()))
                 .anyMatch(p -> p.contains("장면 설명이 너무 짧다"));
@@ -233,5 +235,97 @@ class LineRulesTest {
                 .containsExactly("바로 앞 대사 \"다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?\"와 거의 같은 말이다: \"다른 방법으로는 이 문장을 어떻게 이해할 수 있을까요?\". 같은 말을 되풀이하지 말고 그 말에 대한 반응이나 다음 이야기를 쓴다.");
         assertThat(LineRules.previousLineProblems(List.of(new LineRules.Line("냥박사", "좋은 질문이야. 단어끼리 서로 얼마나 관련 있는지 먼저 보는 거야.")), before))
                 .isEmpty();
+    }
+
+    @Test
+    void 사실_컷의_냥박사_대사에는_사실의_숫자나_용어가_있어야_한다() {
+        // 198번: 사실 '최소 2.7배의 속도 향상'에 냥박사 "응. 계산 과정 자체가 훨씬 효율적으로 바뀌었거든."
+        String fact = "이 연구는 인페인팅에서 최소 2.7배의 속도 향상을 관찰했으며 FID 점수는 최소 1.6배 개선되었다.";
+        List<ComicPlan.Term> terms = List.of(new ComicPlan.Term("latent space", "잠재 공간", List.of()));
+
+        assertThat(LineRules.doctorContentProblems(fact, List.of(new LineRules.Line("콩이", "속도가 정말 빨라졌네요!"),
+                new LineRules.Line("냥박사", "응. 계산 과정 자체가 훨씬 효율적으로 바뀌었거든.")), terms))
+                .singleElement().asString().contains("냥박사 대사에 이 컷의 사실 내용이 없다", "2.7, 1.6");
+        assertThat(LineRules.doctorContentProblems(fact, List.of(new LineRules.Line("냥박사", "구멍 채우기에서 2.7배나 빨라졌어.")), terms)).isEmpty();
+        assertThat(LineRules.doctorContentProblems(fact, List.of(new LineRules.Line("콩이", "2.7배요?")), terms))
+                .singleElement().asString().contains("냥박사 대사가 없다");
+        assertThat(LineRules.doctorContentProblems("이 연구는 잠재 공간(latent space)에서 학습한다.",
+                List.of(new LineRules.Line("냥박사", "그림을 작게 줄인 잠재 공간에서 배우는 거야.")), terms)).isEmpty();
+        assertThat(LineRules.doctorContentProblems("두 단계로 나누어 학습한다.", List.of(new LineRules.Line("냥박사", "맞아.")), terms))
+                .as("숫자도 용어도 없는 사실은 검사하지 않는다").isEmpty();
+        // 201번: '4.4절'을 넣으라고 해서 "4.4절에 적용하고 있거든"
+        assertThat(LineRules.factKeys("이 연구는 이미지 채우기 모델을 4.4절에 적용한다. 표 12와 그림 3.2에 있다.", terms)).isEmpty();
+    }
+
+    @Test
+    void 같은_쪽_앞_컷에서_한_말을_되풀이하면_다시_쓰게_하고_다시_써도_바로_앞_대사를_되풀이한_대사는_뺀다() {
+        // 199번 1쪽 5·6컷: 냥박사가 거의 같은 말을 두 번 했다 (유사도 0.64)
+        List<LineRules.Line> before = List.of(new LineRules.Line("냥박사", "잠재 공간에서 확산 모델을 훈련시키면, 복잡도는 줄이고 디테일은 살리는 최적점을 찾을 수 있거든."));
+        List<LineRules.Line> lines = List.of(
+                new LineRules.Line("냥박사", "확산 모델을 잠재 공간에서 훈련시키면, 복잡도는 줄이면서도 디테일을 살리는 최적의 지점을 찾을 수 있거든."),
+                new LineRules.Line("콩이", "그럼 그 공간은 어떻게 만들어요?"),
+                new LineRules.Line("해설", "잠재 공간에서 학습하면 복잡도는 줄이고 디테일은 살린다."));
+
+        assertThat(LineRules.earlierLineProblems(lines, before)).singleElement().asString().contains("이번 쪽 앞 컷 대사");
+        assertThat(LineRules.withoutRepeats(lines, before)).extracting(LineRules.Line::speaker).containsExactly("콩이", "해설");
+    }
+
+    @Test
+    void 냥박사_답이_없는_콩이_질문과_묻기만_하는_콩이를_잡고_다시_써도_남은_답_없는_질문은_뺀다() {
+        // 202번 1쪽 4컷: 냥박사 설명 뒤 콩이 질문으로 끝나 답이 없었다. 콩이 대사 20개 중 18개가 물음표
+        List<LineRules.Line> hanging = List.of(new LineRules.Line("냥박사", "그 모델로 5만 장을 만들면 약 5일이 걸려."),
+                new LineRules.Line("콩이", "와... 그만큼 계산 자원을 많이 써야 한다는 뜻인가요?"),
+                new LineRules.Line("해설", "5만 장을 만드는 데 약 5일이 걸린다."));
+        List<LineRules.Line> answered = List.of(new LineRules.Line("콩이", "그만큼 오래 걸려요?"),
+                new LineRules.Line("냥박사", "응. 5일이나 걸려."), new LineRules.Line("콩이", "그럼 저 같은 학생은 시도하기 어렵겠네요."));
+
+        assertThat(LineRules.unansweredProblems(hanging)).singleElement().asString().contains("질문", "뒤에 냥박사의 답이 없다");
+        assertThat(LineRules.unansweredProblems(answered)).isEmpty();
+        assertThat(LineRules.studentOnlyAsksProblems(hanging)).singleElement().asString().contains("묻기만 한다");
+        assertThat(LineRules.studentOnlyAsksProblems(answered)).isEmpty();
+        assertThat(LineRules.withoutUnansweredQuestions(hanging)).extracting(LineRules.Line::speaker).containsExactly("냥박사", "해설");
+        assertThat(LineRules.withoutUnansweredQuestions(answered)).isEqualTo(answered);
+        // 203번 1쪽 5컷: 냥박사 답이 빠져 콩이 질문 두 개가 이어졌다
+        List<LineRules.Line> twoQuestions = List.of(new LineRules.Line("콩이", "반복 평가도 똑같이 느린 건가요?"),
+                new LineRules.Line("콩이", "5만 장에 약 5일이나 걸린다는 건가요?"), new LineRules.Line("냥박사", "그렇지. 반복 평가 자체가 무거워."));
+        assertThat(LineRules.unansweredProblems(twoQuestions)).singleElement().asString().contains("반복 평가도 똑같이 느린 건가요?");
+        assertThat(LineRules.withoutUnansweredQuestions(twoQuestions)).extracting(LineRules.Line::text)
+                .containsExactly("5만 장에 약 5일이나 걸린다는 건가요?", "그렇지. 반복 평가 자체가 무거워.");
+    }
+
+    @Test
+    void 냥박사가_저자처럼_우리라고_말하면_다시_쓰게_하고_사실과_다른_내용만_말한_냥박사_대사는_뺀다() {
+        // 204번 2쪽 3컷: 다른 연구(VQ-VAE)의 방법을 냥박사가 "우리는 자기회귀 모델을 써서 …"
+        assertThat(LineRules.authorVoiceProblems(List.of(new LineRules.Line("냥박사", "그게 핵심이야. 우리는 자기회귀 모델을 써서 사전 분포를 학습시키거든."))))
+                .singleElement().asString().contains("저자처럼");
+        assertThat(LineRules.authorVoiceProblems(List.of(new LineRules.Line("냥박사", "우리가 보는 그림에는 작은 점이 아주 많아.")))).isEmpty();
+        assertThat(LineRules.authorVoiceProblems(List.of(new LineRules.Line("콩이", "우리는 모델을 훈련시켜 볼까요?")))).as("콩이는 보지 않는다").isEmpty();
+        // 205번: 좁은 검사를 빠져나간 저자 말투
+        List<LineRules.Line> author = List.of(new LineRules.Line("냥박사", "우리가 사용한 모델은 LAION-400M이라는 데이터셋에서 훈련했어."),
+                new LineRules.Line("냥박사", "CelebA-HQ 데이터셋에서 우리가 새로운 최고 수준인 FID 점수 5.11을 기록했거든."),
+                new LineRules.Line("냥박사", "우리는 압축 수준을 선택할 자유가 있어."),
+                new LineRules.Line("냥박사", "교차 주의층 덕분에 우리가 상상하지 못했던 방식으로 그림을 만들 수 있어."));
+        assertThat(LineRules.authorVoiceProblems(author)).hasSize(3);
+        assertThat(LineRules.withoutAuthorVoice(author)).extracting(LineRules.Line::text).containsExactly(
+                "연구자들이 사용한 모델은 LAION-400M이라는 데이터셋에서 훈련했어.",
+                "CelebA-HQ 데이터셋에서 연구자들이 새로운 최고 수준인 FID 점수 5.11을 기록했거든.",
+                "연구자들은 압축 수준을 선택할 자유가 있어.",
+                "교차 주의층 덕분에 우리가 상상하지 못했던 방식으로 그림을 만들 수 있어.");
+        // 205번 4쪽 3컷: 냥박사 대사가 빠지자 콩이가 같은 말을 연달아 했다
+        assertThat(LineRules.withoutInnerRepeats(List.of(
+                new LineRules.Line("콩이", "그렇다면, 고정밀도가 정말 중요할 때 잠재 공간 확산 모델을 쓰는 건 의문스러울 수 있겠네요."),
+                new LineRules.Line("콩이", "즉, 아주 높은 정밀도를 요구하는 작업에서는 잠재 공간 확산 모델의 사용 자체가 의문시될 수 있다는 뜻이군요."),
+                new LineRules.Line("해설", "고정밀도가 필요할 때 사용은 의문스러울 수 있다.")))).extracting(LineRules.Line::speaker).containsExactly("콩이", "해설");
+
+        // 204번 1쪽 6컷: 사실은 '5만 장에 약 5일'(추론)인데 냥박사는 같은 문장의 '수백 GPU 날'(학습)을 말했다
+        String fact = "단일 A100 GPU에서 50k 샘플을 생성하는 데는 약 5일이 걸린다.";
+        List<LineRules.Line> lines = List.of(new LineRules.Line("콩이", "그럼 그림을 만드는 것도 느린가요?"),
+                new LineRules.Line("냥박사", "가장 강력한 확산 모델들을 훈련하는 데는 수백 개의 GPU 날이 걸리기도 해."),
+                new LineRules.Line("콩이", "정말 오래 걸리네요."));
+        assertThat(LineRules.withoutOffFactDoctorLines(lines, fact, List.of())).extracting(LineRules.Line::speaker).containsExactly("콩이", "콩이");
+        assertThat(LineRules.withoutUnansweredQuestions(LineRules.withoutOffFactDoctorLines(lines, fact, List.of())))
+                .as("답이 빠진 질문도 뺀다").extracting(LineRules.Line::text).containsExactly("정말 오래 걸리네요.");
+        List<LineRules.Line> onFact = List.of(new LineRules.Line("냥박사", "A100 한 대로 50k 장을 만들면 5일쯤 걸려."));
+        assertThat(LineRules.withoutOffFactDoctorLines(onFact, fact, List.of())).isEqualTo(onFact);
     }
 }
