@@ -49,6 +49,7 @@ class ComicWriterTest {
         boolean brokenBoard;    // 콘티가 같은 사실 번호를 두 번 쓴다 (끝까지 고치지 않음)
         boolean alwaysAsk;      // 콩이가 컷마다 "냥박사님, …?" 질문으로 시작한다
         boolean wrongDoctor;    // 대사 확인이 냥박사 대사를 늘 '어긋남'으로 판정한다 (다시 써도 고치지 않음)
+        boolean copyOpening;    // 여는 컷 첫 시도가 앞 쪽 마지막 대사("다음이 궁금해요!")를 그대로 옮긴다
 
         @Override
         public ChatResult chat(String model, List<ChatMessage> messages, Map<String, Object> schema) {
@@ -85,9 +86,11 @@ class ComicWriterTest {
                 }
                 content = "{\"results\":[" + String.join(",", verdicts) + "]}";
             } else if (properties.containsKey("opening")) {
+                String opening = copyOpening && attempt == 1 && prompt.contains("앞 쪽의 마지막 대사")
+                        ? "{\"speaker\":\"콩이\",\"text\":\"다음이 궁금해요!\"}" : "{\"speaker\":\"해설\",\"text\":\"콩이는 고민에 빠졌다.\"}";
                 content = """
-                        {"opening":{"scene":"콩이의 방, 멈춘 컴퓨터 앞에서 콩이가 한숨을 쉰다","lines":[{"speaker":"해설","text":"콩이는 고민에 빠졌다."}]},
-                         "closing":{"scene":"냥박사님 연구실, 콩이가 노트를 덮으며 활짝 웃는다","lines":[{"speaker":"콩이","text":"다음이 궁금해요!"}]}}""";
+                        {"opening":{"scene":"콩이의 방, 멈춘 컴퓨터 앞에서 콩이가 한숨을 쉰다","lines":[%s]},
+                         "closing":{"scene":"냥박사님 연구실, 콩이가 노트를 덮으며 활짝 웃는다","lines":[{"speaker":"콩이","text":"다음이 궁금해요!"}]}}""".formatted(opening);
             } else {
                 Matcher matcher = FACT.matcher(prompt);
                 String fact = matcher.find() ? matcher.group(1) : "?";
@@ -327,6 +330,18 @@ class ComicWriterTest {
         assertThat(staging.getFirst()).contains("이번 쪽 첫 사실 컷의 첫 대사: 콩이: 와, 사실 1번 내용이다. 신기해요!")
                 .doesNotContain("앞 쪽의 마지막 장면:");
         assertThat(staging.get(1)).contains("앞 쪽의 마지막 대사: 콩이: 다음이 궁금해요!", "이번 쪽 첫 사실 컷의 장면:");
+    }
+
+    @Test
+    void 여는_컷이_앞_쪽_마지막_대사를_되풀이하면_다시_쓰게_한다() {
+        // 195번: 2쪽 여는 컷이 1쪽 7컷 "그럼 고화질로 만들려면 그만큼 시간이 오래 걸린다는 뜻인가요?"를 그대로 옮겼다
+        FakeAi ai = new FakeAi();
+        ai.copyOpening = true;
+        WrittenComic comic = writer(ai).write(plan(), sentences(), (done, total) -> { });
+
+        assertThat(ai.requests.stream().filter(messages -> messages.size() >= 4).map(messages -> messages.getLast().content()))
+                .anyMatch(content -> content.contains("바로 앞 대사 \"다음이 궁금해요!\"와 거의 같은 말이다"));
+        assertThat(comic.pages().get(1).panels().getFirst().lines()).extracting(LineRules.Line::text).doesNotContain("다음이 궁금해요!");
     }
 
     @Test

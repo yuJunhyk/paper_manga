@@ -130,9 +130,10 @@ public class ComicWriter {
             }
 
             String lastFactScene = factPanels.isEmpty() ? previousScene : factPanels.getLast().scene();
+            List<LineRules.Line> lastFactLines = factPanels.isEmpty() ? previousLines : spoken(factPanels.getLast().lines());
             String around = previousPage + firstFactPanel(factPanels);
-            List<WrittenComic.Panel> staging = writeStagingPanels(model, plan, page, setting, beat, ending, previousScene, around,
-                    factPanels.isEmpty() ? null : factPanels.getFirst(), lastFactScene, seenLines, paperWords, servers);
+            List<WrittenComic.Panel> staging = writeStagingPanels(model, plan, page, setting, beat, ending, previousScene, previousLines,
+                    around, factPanels.isEmpty() ? null : factPanels.getFirst(), lastFactScene, lastFactLines, seenLines, paperWords, servers);
             listener.update(++doneSteps, totalSteps);
 
             List<WrittenComic.Panel> panels = new ArrayList<>();
@@ -361,8 +362,9 @@ public class ComicWriter {
     }
 
     private List<WrittenComic.Panel> writeStagingPanels(String model, ComicPlan plan, ComicPlan.PagePlan page, String setting,
-                                                        String beat, String ending, String previousScene, String around,
-                                                        WrittenComic.Panel firstFact, String lastFactScene, Set<String> seenLines,
+                                                        String beat, String ending, String previousScene,
+                                                        List<LineRules.Line> previousLines, String around, WrittenComic.Panel firstFact,
+                                                        String lastFactScene, List<LineRules.Line> lastFactLines, Set<String> seenLines,
                                                         Set<String> paperWords, Set<String> servers) {
         boolean firstPage = page.pageNumber() == 1;
         boolean lastPage = page.pageNumber() == plan.pages().size();
@@ -380,7 +382,11 @@ public class ComicWriter {
                         problems.addAll(LineRules.nextPanelProblems(value.opening().scene(), spoken(lines(value.opening())),
                                 firstFact.scene(), spoken(firstFact.lines())));
                     }
+                    // 여는 컷은 앞 쪽 마지막 대사를, 닫는 컷은 마지막 사실 컷 대사를 되풀이하지 않는다
+                    // (195번: 2쪽 여는 컷이 1쪽 7컷 "그럼 고화질로 만들려면 그만큼 시간이 오래 걸린다는 뜻인가요?"를 그대로 옮김)
+                    problems.addAll(LineRules.previousLineProblems(spoken(lines(value.opening())), previousLines));
                     problems.addAll(LineRules.problems(value.closing().scene(), lines(value.closing()), seenLines, lastFactScene));
+                    problems.addAll(LineRules.previousLineProblems(spoken(lines(value.closing())), lastFactLines));
                     String text = Stream.of(value.opening(), value.closing())
                             .flatMap(answerPanel -> Stream.concat(Stream.of(answerPanel.scene()), answerPanel.lines().stream().map(LineAnswer::text)))
                             .collect(Collectors.joining(" "));
