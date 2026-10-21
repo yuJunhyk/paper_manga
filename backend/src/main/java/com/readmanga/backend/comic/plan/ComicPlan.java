@@ -4,16 +4,40 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 /**
- * 만화 설계도: 쪽(기승전결) → 조각(제목·요약·문장 범위) → 사실(근거 문장 번호).
+ * 만화 설계도: 논문 요약(문제·방법·결과·한계) → 쪽(기승전결, 요약 칸으로 정함) → 사실(근거 문장 번호).
+ * 쪽의 chunks는 사실을 뽑은 기록(위치로 나눈 조각의 제목·버린 사실)이고, facts는 요약 문장에 연결해 고른 사실이다.
  * 5단계에서 이 설계도를 보고 이야기와 컷을 쓴다.
  */
-public record ComicPlan(String comicTitle, List<PagePlan> pages, Stats stats, List<Term> terms) {
+public record ComicPlan(String comicTitle, List<PagePlan> pages, Stats stats, List<Term> terms, List<SummaryPoint> summary) {
+
+    /** 요약 단계 전에 저장한 설계도(plan_json)에는 summary가 없다 */
+    public ComicPlan {
+        summary = summary == null ? List.of() : summary;
+    }
+
+    public ComicPlan(String comicTitle, List<PagePlan> pages, Stats stats, List<Term> terms) {
+        this(comicTitle, pages, stats, terms, List.of());
+    }
 
     public ComicPlan(String comicTitle, List<PagePlan> pages, Stats stats) {
         this(comicTitle, pages, stats, List.of());
     }
 
-    public record PagePlan(int pageNumber, String role, String roleMeaning, List<ChunkPlan> chunks, List<FactPlan> facts) {
+    /** points는 이 쪽이 맡은 요약 문장 (이야기 뼈대가 쪽마다 다룰 내용으로 쓴다) */
+    public record PagePlan(int pageNumber, String role, String roleMeaning, List<ChunkPlan> chunks, List<FactPlan> facts,
+                           List<String> points) {
+
+        public PagePlan {
+            points = points == null ? List.of() : points;
+        }
+
+        public PagePlan(int pageNumber, String role, String roleMeaning, List<ChunkPlan> chunks, List<FactPlan> facts) {
+            this(pageNumber, role, roleMeaning, chunks, facts, List.of());
+        }
+    }
+
+    /** 논문 요약 문장 하나. slot은 problem(문제)·method(방법)·result(결과)·limitation(한계·남은 과제) 중 하나 */
+    public record SummaryPoint(String slot, String text, List<Integer> evidence) {
     }
 
     public record ChunkPlan(int start, int end, List<String> sections, String title, String summary,

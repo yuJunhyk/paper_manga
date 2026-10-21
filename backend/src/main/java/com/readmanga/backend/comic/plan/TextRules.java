@@ -70,6 +70,14 @@ public final class TextRules {
      */
     private static final Pattern KOREAN_ONLY_PARENS = Pattern.compile("\\(\\s*[가-힣]+(\\s+[가-힣]+)*\\s*\\)");
 
+    /**
+     * 다른 연구가 주어인 원문 문장: "[66] extend this approach …", "VQ-VAEs [67,101] use …", "Milesi et al. [6] employed …".
+     * 인용 번호 뒤에 'and', 'or'가 오면 이 논문 문장이 쪼개진 것이라 뺀다("[72] and fix the image degradation …").
+     */
+    private static final Pattern OTHER_STUDY_SENTENCE = Pattern.compile(
+            "^\\s*\\[\\d+[\\d,\\s\\-–]*]\\s+(?!and\\b|or\\b)[a-z]"
+                    + "|^[A-Z][A-Za-z0-9-]*(?:\\s+[A-Z][A-Za-z0-9-]*){0,2}\\s*(?:et al\\.\\s*)?\\[\\d+[\\d,\\s\\-–]*]\\s+(?!and\\b|or\\b)[a-z]");
+    private static final Pattern PARENS = Pattern.compile("\\([^()]*\\)");
     private static final Pattern NOT_WORD_CHAR = Pattern.compile("[^가-힣A-Za-z0-9]");
 
     private TextRules() {
@@ -197,6 +205,19 @@ public final class TextRules {
     }
 
     /** 글자 두 개씩 묶은 조각이 얼마나 겹치는지(0~1). 비슷한 사실을 거르는 데 쓴다. */
+    public static boolean isOtherStudySentence(String sentence) {
+        return sentence != null && OTHER_STUDY_SENTENCE.matcher(sentence).find();
+    }
+
+    /**
+     * 사실끼리 비교할 때 쓰는 비슷한 정도: 괄호 안(용어 규칙이 붙이는 영어 원문)은 빼고 잰다. 199번에서 두 사실에 똑같이 붙은
+     * '(Latent Diffusion Models)'가 글자 쌍의 대부분을 차지해, 'GAN보다 느리다'와 '계산 요구가 적다'가 0.40(빼면 0.14)으로 나와
+     * 같은 근거의 반복으로 버려졌다.
+     */
+    public static double factSimilarity(String a, String b) {
+        return similarity(PARENS.matcher(a).replaceAll(""), PARENS.matcher(b).replaceAll(""));
+    }
+
     public static double similarity(String a, String b) {
         Set<String> first = bigrams(a);
         Set<String> second = bigrams(b);

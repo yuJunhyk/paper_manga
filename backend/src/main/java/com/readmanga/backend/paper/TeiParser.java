@@ -11,11 +11,20 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 
 @Component
 public class TeiParser {
 
     private static final String TEI = "http://www.tei-c.org/ns/1.0";
+    /**
+     * 문장 앞에 붙은 문단 소제목: "Departure to Latent Space Our approach starts …", "Limitations While LDMs …".
+     * GROBID가 소제목을 첫 문장에 붙여 주어서, AI가 'Departure to Latent Space'를 '잠재 공간으로 이동한다'는 내용으로 읽었다(204번 2쪽 1컷).
+     * 대문자로 시작하는 짧은 낱말 묶음 뒤에 문장 첫 낱말(Our, We, While …)이 오면 소제목으로 보고 뗀다.
+     */
+    private static final Pattern RUN_IN_HEADING = Pattern.compile(
+            "^[A-Z][A-Za-z0-9-]*(?:\\s+(?:[A-Z][A-Za-z0-9-]*|of|to|and|the|in|for|with|on|via|from|&)){0,6}\\s+"
+                    + "(?=(?:Our|We|The|This|These|To|For|As|While|Since|Here|Although|Unlike|Given|Finally|Moreover|However|Next|Specifically|Because|Thus|In)\\s)");
 
     public PaperStructure parse(String teiXml) {
         Element root = readXml(teiXml).getDocumentElement();
@@ -46,9 +55,13 @@ public class TeiParser {
         NodeList nodes = parent.getElementsByTagNameNS(TEI, "s");
         for (int i = 0; i < nodes.getLength(); i++) {
             Element s = (Element) nodes.item(i);
-            sentences.add(new PaperStructure.Sentence(firstNumber + i, textOf(s), pageOf(s)));
+            sentences.add(new PaperStructure.Sentence(firstNumber + i, withoutRunInHeading(textOf(s)), pageOf(s)));
         }
         return sentences;
+    }
+
+    static String withoutRunInHeading(String text) {
+        return RUN_IN_HEADING.matcher(text).replaceFirst("");
     }
 
     private Integer pageOf(Element s) {

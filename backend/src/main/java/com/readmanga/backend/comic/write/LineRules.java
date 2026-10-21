@@ -1,18 +1,21 @@
 package com.readmanga.backend.comic.write;
 
 import com.readmanga.backend.comic.Speaker;
+import com.readmanga.backend.comic.plan.ComicPlan;
 import com.readmanga.backend.comic.plan.TextRules;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.regex.MatchResult;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /** 대사 정리와 검사 규칙. 시험 단계에서 실제로 나온 실수들을 잡는다. */
 public final class LineRules {
 
-    static final int MAX_LINE_LENGTH = 80;
+    static final int MAX_LINE_LENGTH = 140;  // 한 대사에 1~3문장 (예전 80자·한두 문장이라 컷마다 질문 한 줄, 답 한 줄로 끝났다)
     static final int MIN_SCENE_LENGTH = 8;
     static final int MIN_DUPLICATE_LINE_LENGTH = 10;  // '와!' 같은 짧은 감탄사는 반복해도 문제로 보지 않는다
 
@@ -46,6 +49,16 @@ public final class LineRules {
     private static final Pattern STAGE_DIRECTION = Pattern.compile("\\*+[^*]*\\*+");
     /** 한계를 뒤집는 말: "처음엔 느릴 수 있지만, 결국엔 훨씬 빠르게 결과를 낼 수 있어" */
     private static final Pattern REVERSAL = Pattern.compile("결국|오히려|그래도");
+    /**
+     * 저자의 말투: "우리 연구", "우리는 …", "우리가 …". 205번에서 좁게 잡았더니 "우리가 사용한 모델은 …", "우리가 … FID 5.11을 기록했거든"이 빠져나갔다.
+     * 그래서 일상의 '우리'("우리가 보는 그림", "우리가 상상하지 못했던")만 빼고 모두 잡는다.
+     */
+    private static final Pattern AUTHOR_VOICE = Pattern.compile(
+            "우리\\s*(연구|논문|모델|방법|실험)|우리(는|가)(?![^.?!]{0,15}(보는|보기|봤|상상|생각|원하|알고|알 수|느끼|평소|흔히|일상|사람|눈))");
+    /** 사실의 핵심 숫자: 소수(2.7, 5.11)나 두 자리 이상(150, 400). 한 자리 정수는 '두 단계'처럼 흔해서 뺀다 */
+    private static final Pattern KEY_NUMBER = Pattern.compile("\\d+\\.\\d+|\\d{2,}");
+    /** 결과가 아닌 번호: 절·장·쪽 번호와 표·그림 번호 (201번: '4.4절'을 대사에 넣으라고 해서 냥박사가 "4.4절에 적용하고 있거든") */
+    private static final Pattern REFERENCE_NUMBER = Pattern.compile("(표|그림|Table|Fig\\.?)\\s*\\d+(\\.\\d+)*|\\d+(\\.\\d+)*\\s*(절|장|쪽)");
 
     private LineRules() {
     }
@@ -125,6 +138,158 @@ public final class LineRules {
         return similarLineProblems(lines, linesBefore, "바로 앞 대사", "그 말에 대한 반응이나 다음 이야기를 쓴다");
     }
 
+    /**
+     * 사실 컷에서 냥박사가 사실의 핵심을 말하는지. 사실에 숫자가 있으면 그중 하나, 없으면 사실에 나온 용어(정한 번역) 하나가
+     * 냥박사 대사에 있어야 한다. 둘 다 없는 사실은 검사하지 않는다.
+     * 198번은 맞장구만 쳤다: 사실 '최소 2.7배의 속도 향상 … FID 점수는 최소 1.6배 개선' / 냥박사 "응. 계산 과정 자체가 훨씬 효율적으로 바뀌었거든."
+     */
+    public static List<String> doctorContentProblems(String fact, List<Line> lines, List<ComicPlan.Term> terms) {
+        List<String> keys = factKeys(fact, terms);
+        if (keys.isEmpty()) {
+            return List.of();
+        }
+        List<Line> doctor = lines.stream().filter(line -> DOCTOR.equals(line.speaker())).toList();
+        if (doctor.stream().anyMatch(line -> keys.stream().anyMatch(line.text()::contains))) {
+            return List.of();
+        }
+        String shown = String.join(", ", keys.subList(0, Math.min(keys.size(), 4)));
+        return List.of(doctor.isEmpty()
+                ? "냥박사 대사가 없다. 냥박사가 이 컷의 사실(%s)을 자기 말로 설명하는 대사를 넣는다.".formatted(shown)
+                : "냥박사 대사에 이 컷의 사실 내용이 없다. 맞장구만 치지 말고 사실에 나온 %s 중 하나 이상을 넣어 설명한다.".formatted(shown));
+    }
+
+    /** 사실의 핵심 낱말: 숫자(두 자리 이상이나 소수)가 있으면 숫자, 없으면 사실에 나온 용어의 한국어·영어 */
+    static List<String> factKeys(String fact, List<ComicPlan.Term> terms) {
+        List<String> numbers = KEY_NUMBER.matcher(REFERENCE_NUMBER.matcher(fact).replaceAll(" ")).results().map(MatchResult::group).distinct().toList();
+        if (!numbers.isEmpty()) {
+            return numbers;
+        }
+        return terms.stream()
+                .filter(term -> contains(fact, term.korean()) || contains(fact, term.english()))
+                .flatMap(term -> Stream.of(term.korean(), term.english()))
+                .filter(word -> word != null && !word.isBlank())
+                .distinct().toList();
+    }
+
+    private static boolean contains(String text, String word) {
+        return word != null && !word.isBlank() && text.contains(word);
+    }
+
+    /**
+     * 콩이의 질문에 냥박사 답이 바로 이어지지 않는지(컷이 질문으로 끝나거나, 질문 뒤에 콩이가 또 말한다).
+     * 202번 1쪽 4컷: 냥박사 설명 뒤 콩이 "와... 그만큼 계산 자원을 많이 써야 한다는 뜻인가요?"로 끝나고, 다음 컷은 콩이의 새 질문(질문으로 끝난 컷 4개).
+     * 203번 1쪽 5컷: 사실과 맞지 않아 냥박사 답이 빠지자 콩이 질문 두 개가 이어졌다.
+     */
+    public static List<String> unansweredProblems(List<Line> lines) {
+        List<Line> spoken = lines.stream().filter(line -> !Speaker.NARRATION.getLabel().equals(line.speaker())).toList();
+        for (int index = 0; index < spoken.size(); index++) {
+            if (isStudentQuestion(spoken.get(index)) && (index + 1 == spoken.size() || !DOCTOR.equals(spoken.get(index + 1).speaker()))) {
+                return List.of("%s의 질문 \"%s\" 뒤에 %s의 답이 없다. 콩이가 물으면 바로 다음 대사에서 %s가 답하고, 컷을 콩이의 질문으로 끝내지 않는다."
+                        .formatted(STUDENT, shorten(spoken.get(index).text()), DOCTOR, DOCTOR));
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * 콩이가 이 컷에서 묻기만 하는지. 202번 콩이 대사 20개 중 18개가 물음표로 끝났다(198번 18개 중 14개).
+     * 콩이 대사가 있으면 하나 이상은 짐작, 정리, 감탄, 해 본 이야기처럼 물음표 없는 말이어야 한다.
+     */
+    public static List<String> studentOnlyAsksProblems(List<Line> lines) {
+        List<Line> student = lines.stream().filter(line -> STUDENT.equals(line.speaker())).toList();
+        if (student.isEmpty() || !student.stream().allMatch(LineRules::isStudentQuestion)) {
+            return List.of();
+        }
+        return List.of("%s가 이 컷에서 묻기만 한다. %s 대사 중 하나 이상은 물음표 없이, 냥박사 설명을 듣고 자기 말로 정리하거나 짐작하거나 감탄하거나 직접 해 본 이야기로 쓴다."
+                .formatted(STUDENT, STUDENT));
+    }
+
+    /**
+     * 냥박사가 논문 저자처럼 말하는지: "우리는 자기회귀 모델을 써서 …"(204번: 다른 연구 VQ-VAE의 방법을 '우리'의 방법으로),
+     * "우리는 256x256 … 모델을 훈련시켰지만"(203번). 냥박사는 논문을 설명하는 사람이지 저자가 아니다.
+     */
+    public static List<String> authorVoiceProblems(List<Line> lines) {
+        return lines.stream().filter(line -> DOCTOR.equals(line.speaker()) && AUTHOR_VOICE.matcher(line.text()).find())
+                .map(line -> "%s가 논문 저자처럼 '우리'라고 말했다: \"%s\". %s는 저자가 아니다. '이 연구는', '연구자들은'으로 말하고, 다른 연구의 일이면 '앞선 연구는'으로 말한다."
+                        .formatted(DOCTOR, shorten(line.text()), DOCTOR))
+                .toList();
+    }
+
+    /** 다시 써도 남은 냥박사의 저자 말투는 '연구자들'로 바꾼다 ("우리는" → "연구자들은", "우리 모델" → "이 연구의 모델") */
+    public static List<Line> withoutAuthorVoice(List<Line> lines) {
+        return lines.stream().map(line -> !DOCTOR.equals(line.speaker()) || !AUTHOR_VOICE.matcher(line.text()).find() ? line
+                : new Line(line.speaker(), line.text().replaceAll("우리\\s*(연구|논문|모델|방법|실험)", "이 연구의 $1")
+                        .replaceAll("우리는(?![^.?!]{0,15}(보는|보기|봤|상상|생각|원하|알고|알 수|느끼|평소|흔히|일상|사람|눈))", "연구자들은")
+                        .replaceAll("우리가(?![^.?!]{0,15}(보는|보기|봤|상상|생각|원하|알고|알 수|느끼|평소|흔히|일상|사람|눈))", "연구자들이")))
+                .toList();
+    }
+
+    /**
+     * 같은 컷 안에서 바로 앞 인물 대사와 거의 같은 말이나, 콩이가 연달아 한 두 번째 말은 뺀다. 205번 4쪽 3컷: 냥박사 대사가 사실과 맞지 않아
+     * 빠지자 콩이가 "…의문스러울 수 있겠네요." / "즉, … 의문시될 수 있다는 뜻이군요."를 연달아 했다(글자 유사도는 0.16이라 생각이 같아도 못 잡는다).
+     */
+    public static List<Line> withoutInnerRepeats(List<Line> lines) {
+        List<Line> result = new ArrayList<>();
+        for (Line line : lines) {
+            boolean narration = Speaker.NARRATION.getLabel().equals(line.speaker());
+            Line last = result.stream().filter(other -> !Speaker.NARRATION.getLabel().equals(other.speaker())).reduce((a, b) -> b).orElse(null);
+            boolean studentAgain = STUDENT.equals(line.speaker()) && last != null && STUDENT.equals(last.speaker());
+            if (!narration && last != null && (studentAgain || TextRules.similarity(line.text(), last.text()) >= SIMILAR_LINE)) {
+                continue;
+            }
+            result.add(line);
+        }
+        return result;
+    }
+
+    /**
+     * 다시 써도 사실의 핵심(숫자·용어)이 없는 냥박사 대사는 뺀다. 204번 1쪽 6컷: 사실은 '5만 장에 약 5일'(추론 비용)인데
+     * 냥박사는 같은 근거 문장의 다른 부분 '수백 GPU 날'(학습 비용)을 말했고, 두 번 다시 써도 고쳐지지 않았다.
+     */
+    public static List<Line> withoutOffFactDoctorLines(List<Line> lines, String fact, List<ComicPlan.Term> terms) {
+        List<String> keys = factKeys(fact, terms);
+        if (keys.isEmpty() || doctorContentProblems(fact, lines, terms).isEmpty()) {
+            return lines;
+        }
+        return lines.stream().filter(line -> !DOCTOR.equals(line.speaker())).toList();
+    }
+
+    /** 다시 써도(또는 사실과 맞지 않는 대사를 뺀 뒤) 냥박사 답이 바로 이어지지 않는 콩이 질문은 뺀다 */
+    public static List<Line> withoutUnansweredQuestions(List<Line> lines) {
+        List<Line> result = new ArrayList<>();
+        for (int index = 0; index < lines.size(); index++) {
+            Line line = lines.get(index);
+            Line next = lines.subList(index + 1, lines.size()).stream()
+                    .filter(other -> !Speaker.NARRATION.getLabel().equals(other.speaker())).findFirst().orElse(null);
+            if (isStudentQuestion(line) && (next == null || !DOCTOR.equals(next.speaker()))) {
+                continue;
+            }
+            result.add(line);
+        }
+        return result;
+    }
+
+    private static boolean isStudentQuestion(Line line) {
+        return STUDENT.equals(line.speaker()) && line.text().strip().matches("(?s).*\\?[\\s!.~…)]*$");
+    }
+
+    /**
+     * 같은 쪽 앞 컷들에서 이미 한 말을 되풀이했는지(바로 앞 컷은 previousLineProblems가 본다).
+     * 198번 4쪽: 1컷과 2컷의 콩이가 '시간이 오래 걸리는 건가요?'를 두 번 물었다.
+     */
+    public static List<String> earlierLineProblems(List<Line> lines, List<Line> pageLines) {
+        return similarLineProblems(lines, pageLines, "이번 쪽 앞 컷 대사", "새로 알게 된 것이나 다음 궁금증을 쓴다");
+    }
+
+    /**
+     * 다시 써도 바로 앞 대사를 되풀이한 인물 대사는 뺀다(해설은 남긴다).
+     * 199번 1쪽 5·6컷: 냥박사 "잠재 공간에서 확산 모델을 훈련시키면, 복잡도는 줄이고 디테일은 살리는 최적점을…"을 두 번(유사도 0.64).
+     */
+    public static List<Line> withoutRepeats(List<Line> lines, List<Line> linesBefore) {
+        return lines.stream().filter(line -> Speaker.NARRATION.getLabel().equals(line.speaker())
+                || linesBefore.stream().noneMatch(before -> TextRules.similarity(line.text(), before.text()) >= SIMILAR_LINE)).toList();
+    }
+
     private static List<String> similarLineProblems(List<Line> lines, List<Line> others, String label, String instead) {
         List<String> problems = new ArrayList<>();
         for (Line line : lines) {
@@ -167,7 +332,7 @@ public final class LineRules {
                 problems.add("대사에 '학습 만화'라는 말이 들어 있다.");
             }
             if (text.length() > MAX_LINE_LENGTH) {
-                problems.add("대사가 너무 길다(%d자): \"%s\". 60자 안팎으로 줄여라.".formatted(text.length(), shorten(text)));
+                problems.add("대사가 너무 길다(%d자): \"%s\". 한 대사는 1~3문장, 120자 안쪽으로 줄여라.".formatted(text.length(), shorten(text)));
             }
             if (DOCTOR.equals(line.speaker()) && SENTENCE.matcher(text).results()
                     .anyMatch(sentence -> POLITE_ENDING.matcher(sentence.group().strip()).find())) {

@@ -117,4 +117,25 @@ class TextRulesTest {
         assertThat(TextRules.koreanParenthesisProblems("흐름", "시각 자료 이해 능력(시각 자료 이해력)이 중요하다")).hasSize(1);
         assertThat(TextRules.koreanParenthesisProblems("1번 사실", "잠재 공간(latent space)에서 정답률이 높았다(중앙값 0.750, N=54)")).isEmpty();
     }
+
+    @Test
+    void 사실끼리_비교할_때는_괄호_속_영어_원문을_빼고_잰다() {
+        // 199번: 똑같이 붙은 '(Latent Diffusion Models)' 때문에 다른 두 사실이 0.40으로 나와 'GAN보다 느리다'가 버려졌다
+        String slow = "잠재 공간 확산 모델(Latent Diffusion Models)의 순차적 샘플링 과정은 GAN보다 느리다.";
+        String cheap = "잠재 공간 확산 모델(Latent Diffusion Models)은 픽셀 기반 접근 방식에 비해 계산 요구 사항을 크게 줄인다.";
+
+        assertThat(TextRules.similarity(slow, cheap)).isGreaterThanOrEqualTo(0.35);
+        assertThat(TextRules.factSimilarity(slow, cheap)).isLessThan(0.35);
+    }
+
+    @Test
+    void 인용_번호가_주어인_원문_문장은_다른_연구의_문장이다() {
+        // 204번: "[66] extend …"를 '이 연구는'으로, "VQ-VAEs [67,101] use …"를 냥박사가 '우리는'으로 말했다
+        assertThat(TextRules.isOtherStudySentence("[66] extend this approach to text-to-image generation by learning a joint distribution.")).isTrue();
+        assertThat(TextRules.isOtherStudySentence("VQ-VAEs [67,101] use autoregressive models to learn an expressive prior.")).isTrue();
+        assertThat(TextRules.isOtherStudySentence("Milesi et al. [6] employed GenAI tools to transform learning analytics data.")).isTrue();
+        assertThat(TextRules.isOtherStudySentence("[72] and fix the image degradation to a bicubic interpolation.")).as("이 논문 문장이 쪼개진 것").isFalse();
+        assertThat(TextRules.isOtherStudySentence("Following [15], the UNet of this diffusion model uses attention layers.")).isFalse();
+        assertThat(TextRules.isOtherStudySentence("We train a 1.45B parameter model on LAION-400M [78].")).isFalse();
+    }
 }
